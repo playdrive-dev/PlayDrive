@@ -82,13 +82,37 @@ class AlbumTest {
         assertEquals("화요일 밤, 빗속의 귀갓길", AlbumNaming.title(s, kst))
     }
 
-    @Test fun `주행 중 무드 그래픽은 10초 이상 간격으로만 바뀐다(정차 중엔 바로)`() {
+    @Test fun `무드 상태는 눈에 띄게 달라질 때만 넘긴다`() {
         val th = MoodThrottle()
-        val a = MoodState(0.2f, 0.5f, 0f, false); val b = MoodState(0.8f, 0.5f, 0f, false); val c = MoodState(0.2f, 0.9f, 0.9f, true)
-        assertEquals(a, th.offer(a, 0, restricted = true))
-        assertEquals(null, th.offer(b, 5_000, restricted = true))
-        assertEquals(b, th.offer(b, 10_000, restricted = true))
-        assertEquals(c, th.offer(c, 10_500, restricted = false))
+        val a = MoodState(0.2f, 0.5f, 0f, false)
+        assertEquals(a, th.offer(a))
+        assertEquals(null, th.offer(a.copy(energy = 0.25f)))
+        assertEquals(a.copy(rain = true), th.offer(a.copy(rain = true)))
+    }
+
+    @Test fun `같은 날 같은 시간대에 제목이 겹치면 두 번째 길로 구분한다`() {
+        val first = DriveSummary(epoch(2026, 11, 10, 7), 0, 80f, true, 900)
+        val second = first.copy(startEpochMs = first.startEpochMs + 3_600_000)        // 같은 아침, 또 비
+        val third = first.copy(startEpochMs = first.startEpochMs + 2 * 3_600_000)
+        val otherDay = first.copy(startEpochMs = epoch(2026, 11, 17, 7))              // 다음 주 화요일
+        val calm = first.copy(startEpochMs = first.startEpochMs + 1_800_000, rained = false) // 같은 아침이지만 다른 제목
+        val all = listOf(first, second, third, otherDay, calm)
+        assertEquals("화요일 아침, 빗속의 출근길", AlbumNaming.uniqueTitle(first, all, kst))
+        assertEquals("화요일 아침, 빗속의 두 번째 길", AlbumNaming.uniqueTitle(second, all, kst))
+        assertEquals("화요일 아침, 빗속의 세 번째 길", AlbumNaming.uniqueTitle(third, all, kst))
+        assertEquals("화요일 아침, 빗속의 출근길", AlbumNaming.uniqueTitle(otherDay, all, kst))
+        assertEquals("화요일 아침, 고요한 출근길", AlbumNaming.uniqueTitle(calm, all, kst))
+        // 새 주행(아직 저장 전)도 같은 규칙: 이미 있는 두 장 뒤 → 세 번째
+        assertEquals("화요일 아침, 빗속의 세 번째 길", AlbumNaming.uniqueTitle(third, listOf(first, second), kst))
+        val many = (0 until 12).map { first.copy(startEpochMs = first.startEpochMs + it * 60_000L) }
+        val titles = many.map { AlbumNaming.uniqueTitle(it, many, kst) }
+        assertTrue(titles.none { t -> t.any { it.isDigit() } })
+        assertEquals(10, titles.take(10).toSet().size)
+    }
+
+    @Test fun `상세 화면 날짜 한 줄`() {
+        assertEquals("11월 10일 화요일 · 오후 9:10", AlbumNaming.dateLine(epoch(2026, 11, 10, 21), kst))
+        assertEquals("11월 10일 화요일 · 오전 12:10", AlbumNaming.dateLine(epoch(2026, 11, 10, 0), kst))
     }
 
     @Test fun `웰니스 표현만 - 화면 문구에 의료·치료·점수 표현이 없다`() {

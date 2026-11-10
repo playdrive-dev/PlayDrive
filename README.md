@@ -24,15 +24,18 @@
 
 ## 화면
 
-| 무드(정차) | 무드(주행 중) | 주차 후 1분 제안 |
-|---|---|---|
-| ![](docs/screens/01_mood_parked_intro.png) | ![](docs/screens/02_mood_driving.png) | ![](docs/screens/03_park_offer.png) |
-| **1분 호흡** | **마음 앨범** | **호흡 후 앨범** |
-| ![](docs/screens/04_breath.png) | ![](docs/screens/05_album.png) | ![](docs/screens/06_album_after_breath.png) |
+| 무드(정차) | 무드(주행 중 — 완전 정지) | 주차 후 1분 제안 | 1분 호흡 |
+|---|---|---|---|
+| ![](docs/screens/01_mood_parked.png) | ![](docs/screens/02_mood_driving.png) | ![](docs/screens/03_park_offer.png) | ![](docs/screens/04_breath.png) |
+| **마음 앨범(새 앨범 강조)** | **앨범 상세(회고 있음)** | **앨범 상세(회고 입력)** | **같은 아침 두 번째 주행** |
+| ![](docs/screens/05_album_grid.png) | ![](docs/screens/06_album_detail.png) | ![](docs/screens/07_album_detail_input.png) | ![](docs/screens/08_album_second_trip.png) |
 
-- 주행 중에는 단색 배경과 추상 그래픽, 재생/일시정지 버튼만 보입니다(글자·숫자·알림 없음, CarUxRestrictions 연동).
+앱 창 영역만 자른 이미지입니다. 차량 화면 전체(1024×768, 왼쪽 홈 위젯·상단 상태바·하단 공조 바 포함)는 같은 이름의 `*_full.png`를 보세요.
+
+- 주행 중(CarUxRestrictions `requiresDistractionOptimization`)에는 단색 배경과 추상 그래픽, 재생/일시정지 버튼만 보이고 **그래픽이 완전히 멈춥니다**(Android 차량 앱 품질 기준 SA-1). 음악 상태 변화는 정차하는 순간 한 번에 반영됩니다.
 - 주차(P단) 후 운전석에만 사람이 있을 때 "1분 숨 고르기"를 제안합니다. 동승자가 있으면 제안하지 않습니다.
-- 마음 앨범: 주행 한 번이 앨범 한 장이 됩니다. 커버는 그날 운전의 부드러움·비·시간대로 그린 추상 그래픽이고, 회고 한 줄은 정차 중에만 남길 수 있습니다. 기록은 기기 안에만 저장합니다.
+- 마음 앨범: 주행 한 번이 앨범 한 장이 됩니다. 정사각 커버 격자에 제목 한 줄, 커버를 누르면 큰 커버·날짜·회고 한 줄을 봅니다. 커버는 그날 운전의 부드러움·비·시간대로 그린 추상 그래픽이고, 회고 한 줄은 정차 중에만 남길 수 있습니다. 같은 날 같은 시간대 제목이 겹치면 "…빗속의 두 번째 길"처럼 구분합니다. 기록은 기기 안에만 저장합니다.
+- 차량 화면 기준: 터치 영역 76dp 이상, 본문 24sp·제목 32sp 이상.
 
 ## 테스트 환경 및 필요한 설정
 

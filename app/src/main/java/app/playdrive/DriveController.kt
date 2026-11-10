@@ -133,7 +133,7 @@ class DriveController(context: Context, private val listener: Listener) {
         val events = engine.onSample(sample)
         val cmds = director.update(engine.state, events)
         recorder.update(engine.state, events)?.let { summary ->
-            val album = Album(summary.startEpochMs, summary, AlbumNaming.title(summary))
+            val album = Album(summary.startEpochMs, summary, AlbumNaming.uniqueTitle(summary, albums.all().map { it.summary }))
             albums.add(album)
             val suggest = BreathCoach.shouldSuggest(engine.state, justFinishedDrive = true)
             Log.i(TAG, "주행 끝 → 앨범 '${album.title}', 주차 후 1분 제안=$suggest")

@@ -109,6 +109,36 @@ object AlbumNaming {
         return "$day ${part.word}, $mood $trip"
     }
 
+    private val ordinals = listOf("두", "세", "네", "다섯", "여섯", "일곱", "여덟", "아홉", "열")
+
+    /**
+     * 같은 날·같은 시간대에 제목이 겹치면 두 번째부터 "… 빗속의 두 번째 길"처럼 구분한다(숫자 없이).
+     * existing = 이미 저장된 앨범들(순서 무관). 이 주행보다 먼저 시작한 같은 제목만 센다.
+     */
+    fun uniqueTitle(s: DriveSummary, existing: List<DriveSummary>, tz: TimeZone = TimeZone.getDefault()): String {
+        val base = title(s, tz)
+        val day = dayKey(s.startEpochMs, tz)
+        val before = existing.count { it.startEpochMs < s.startEpochMs && dayKey(it.startEpochMs, tz) == day && title(it, tz) == base }
+        if (before == 0) return base
+        val head = base.substringBeforeLast(' ') // "화요일 아침, 빗속의"
+        val nth = ordinals.getOrNull(before - 1)?.let { "$it 번째 길" } ?: "또 다른 길"
+        return "$head $nth"
+    }
+
+    private fun dayKey(ms: Long, tz: TimeZone): Int {
+        val c = Calendar.getInstance(tz).apply { timeInMillis = ms }
+        return c.get(Calendar.YEAR) * 1000 + c.get(Calendar.DAY_OF_YEAR)
+    }
+
+    /** 상세 화면의 날짜 한 줄: "11월 10일 화요일 · 오후 9:10". */
+    fun dateLine(ms: Long, tz: TimeZone = TimeZone.getDefault(), sep: String = " · "): String {
+        val c = Calendar.getInstance(tz).apply { timeInMillis = ms }
+        val h = c.get(Calendar.HOUR_OF_DAY)
+        val ampm = if (h < 12) "오전" else "오후"
+        val h12 = if (h % 12 == 0) 12 else h % 12
+        return "${c.get(Calendar.MONTH) + 1}월 ${c.get(Calendar.DAY_OF_MONTH)}일 ${days[c.get(Calendar.DAY_OF_WEEK) - 1]}$sep$ampm $h12:${"%02d".format(c.get(Calendar.MINUTE))}"
+    }
+
     /** 커버 그래픽 사양(색은 0xAARRGGBB). */
     data class CoverSpec(
         val background: Int,
@@ -146,9 +176,7 @@ object AlbumNaming {
     }
 }
 
-/**
- * 무드 그래픽 상태(순수). 주행 중(UX 제한)에는 최소 간격을 두고 천천히만 바뀌게 한다.
- */
+/** 무드 그래픽 상태(순수). 주행 중에는 화면에 반영되지 않는다(ui/MoodScene, SA-1). */
 data class MoodState(val energy: Float, val calm: Float, val brightness: Float, val rain: Boolean) {
     companion object {
         fun from(state: DrivingState, activeLayers: Int, totalLayers: Int) = MoodState(
@@ -160,18 +188,13 @@ data class MoodState(val energy: Float, val calm: Float, val brightness: Float, 
     }
 }
 
-/** 주행 중 무드 그래픽 갱신 규칙: 최소 10초 간격, 전환은 3초 크로스페이드. */
-class MoodThrottle(private val minIntervalMs: Long = 10_000L) {
-    private var lastChangeMs = Long.MIN_VALUE / 2
+/** 무드 상태 변화 거르기: 눈에 띄게 달라졌을 때만 화면(MoodScene)에 넘긴다. 주행 중 정지는 MoodScene이 맡는다. */
+class MoodThrottle {
     var shown: MoodState? = null; private set
 
-    /** 새 상태를 보여줘야 하면 그 상태를, 아니면 null. restricted = 주행 중(UX 제한). */
-    fun offer(s: MoodState, nowMs: Long, restricted: Boolean): MoodState? {
+    fun offer(s: MoodState): MoodState? {
         val cur = shown
-        if (cur == null) { shown = s; lastChangeMs = nowMs; return s }
-        if (cur.differsFrom(s) && (!restricted || nowMs - lastChangeMs >= minIntervalMs)) {
-            shown = s; lastChangeMs = nowMs; return s
-        }
+        if (cur == null || cur.differsFrom(s)) { shown = s; return s }
         return null
     }
 
