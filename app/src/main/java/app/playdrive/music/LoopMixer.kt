@@ -36,6 +36,11 @@ class LoopMixer(
         /** 효과음 동안 음악 덕킹 정도와 진입 시간. */
         val duckGain: Float = 0.3f,
         val duckAttackMs: Long = 80,
+        /** 세트별 레이어 음량(없으면 Layer.level). */
+        val levels: Map<Layer, Float> = emptyMap(),
+        /** 비 효과: 로우패스 차단 주파수와 리버브 젖은 비율. */
+        val rainCutoffHz: Double = 1_800.0,
+        val rainReverbWet: Float = 0.18f,
     )
 
     private val sr = timing.sampleRate
@@ -46,6 +51,7 @@ class LoopMixer(
     }
     private val cues: Map<Cue, StereoPcm> = cuePcm
 
+    private val level = FloatArray(n) { config.levels[Layer.entries[it]] ?: Layer.entries[it].level }
     private val gain = FloatArray(n)
     private val target = FloatArray(n)
     private val panL = FloatArray(n) { cos((Layer.entries[it].pan + 1) * PI / 4).toFloat() * sqrt(2f) }
@@ -75,6 +81,14 @@ class LoopMixer(
     private var duckReleaseAt = -1L
     private val duckAttackStep = (1f - config.duckGain) / (config.duckAttackMs * sr / 1000f)
     private val duckReleaseStep = (1f - config.duckGain) / (0.5f * timing.barFrames)
+
+    // 비 효과(로우패스 + 리버브), rainMix 0→1을 1마디에 걸쳐
+    private var rainTarget = 0f
+    private var rainMix = 0f
+    private val rainStep = 1f / timing.barFrames
+    private val rainL = Biquad(); private val rainR = Biquad()
+    private val reverb = Reverb(sr)
+    private var rainCounter = 0
 
     // DSP 효과(신스 모드)
     private val tapeRampFrames = (0.6 * sr).toLong()
@@ -138,7 +152,7 @@ class LoopMixer(
                 if (g <= 0f) continue
                 val p = pcm[i] ?: continue
                 val pos = if (i == Layer.MELODY.ordinal) readPos + wobble else readPos
-                val k = g * Layer.entries[i].level
+                val k = g * level[i]
                 if (p.isMono) {
                     val s = sample(p.left, pos) * k
                     l += s * panL[i]; r += s * panR[i]
@@ -149,7 +163,21 @@ class LoopMixer(
             val mg = masterGain * tapeGain * duck
             l *= mg; r *= mg
 
-            // 5) 로우패스 딥
+            // 5a) 비: 로우패스(차단 주파수를 rainMix로 18k→rainCutoff) + 리버브
+            if (rainMix != rainTarget) rainMix = if (rainMix < rainTarget) (rainMix + rainStep).coerceAtMost(rainTarget) else (rainMix - rainStep).coerceAtLeast(rainTarget)
+            if (rainMix > 0f || reverb.active) {
+                if (rainCounter-- <= 0) {
+                    rainCounter = 64
+                    val hz = 18_000.0 * exp(ln(config.rainCutoffHz / 18_000.0) * rainMix)
+                    rainL.setLowpass(hz, sr, 0.707); rainR.setLowpass(hz, sr, 0.707)
+                }
+                val fl = rainL.process(l); val fr = rainR.process(r)
+                val wet = config.rainReverbWet * rainMix
+                reverb.process(fl, fr, wet)
+                l = fl + reverb.outL; r = fr + reverb.outR
+            }
+
+            // 5b) 로우패스 딥
             if (lpStart >= 0) {
                 if (lpCounter-- <= 0) { lpCounter = 32; updateLowpass() }
                 if (lpStart >= 0) { l = lpL.process(l); r = lpR.process(r) }
@@ -191,6 +219,7 @@ class LoopMixer(
                 MusicCommand.LowpassDip -> { lpStart = gridFrame; lpL.reset(); lpR.reset() }
                 MusicCommand.PitchWobble -> wobbleStart = gridFrame
                 is MusicCommand.MasterGain -> masterGain = c.gain
+                is MusicCommand.RainFx -> rainTarget = if (c.on) 1f else 0f
             }
         }
     }
@@ -261,6 +290,52 @@ class LoopMixer(
         if (a <= 0.8f) return x
         val y = 0.8f + 0.2f * tanh((a - 0.8f) / 0.2f)
         return if (x < 0) -y else y
+    }
+
+    /** 가벼운 스테레오 리버브(Freeverb 축소판: 콤 4 + 올패스 2, 채널당). */
+    private class Reverb(private val sr: Int) {
+        private val scale = sr / 44_100.0
+        private val combL = intArrayOf(1116, 1188, 1277, 1356).map { Comb((it * scale).toInt()) }
+        private val combR = intArrayOf(1139, 1211, 1300, 1379).map { Comb((it * scale).toInt()) }
+        private val apL = intArrayOf(556, 441).map { Allpass((it * scale).toInt()) }
+        private val apR = intArrayOf(579, 464).map { Allpass((it * scale).toInt()) }
+        var outL = 0f; var outR = 0f
+        private var silentFrames = Int.MAX_VALUE
+        /** 젖은 신호가 남아 있는 동안 true(입력이 끊겨도 꼬리 처리). */
+        val active: Boolean get() = silentFrames < sr * 3
+
+        fun process(l: Float, r: Float, wet: Float) {
+            val inp = (l + r) * 0.015f * (if (wet > 0f) 1f else 0f)
+            var sl = 0f; var sr2 = 0f
+            for (c in combL) sl += c.process(inp)
+            for (c in combR) sr2 += c.process(inp)
+            for (a in apL) sl = a.process(sl)
+            for (a in apR) sr2 = a.process(sr2)
+            outL = sl * wet.coerceAtLeast(0.02f); outR = sr2 * wet.coerceAtLeast(0.02f)
+            silentFrames = if (wet > 0f) 0 else silentFrames + 1
+            if (!active) { outL = 0f; outR = 0f }
+        }
+
+        private class Comb(size: Int) {
+            private val buf = FloatArray(size); private var i = 0; private var store = 0f
+            fun process(x: Float): Float {
+                val y = buf[i]
+                store = y * 0.8f + store * 0.2f // 댐핑
+                buf[i] = x + store * 0.78f
+                if (++i == buf.size) i = 0
+                return y
+            }
+        }
+
+        private class Allpass(size: Int) {
+            private val buf = FloatArray(size); private var i = 0
+            fun process(x: Float): Float {
+                val b = buf[i]
+                buf[i] = x + b * 0.5f
+                if (++i == buf.size) i = 0
+                return b - x
+            }
+        }
     }
 
     private class Biquad {

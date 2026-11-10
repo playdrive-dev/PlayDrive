@@ -14,9 +14,8 @@ class DemoDriveScenarioTest {
 
     private data class Run(val events: List<DrivingEvent>, val commands: List<Pair<Long, MusicCommand>>, val layersAt: Map<Long, Set<Layer>>)
 
-    private fun run(): Run {
+    private fun run(director: MusicDirector = MusicDirector(available = setOf(Layer.PAD, Layer.DRUMS, Layer.HIHAT, Layer.BASS, Layer.CHORDS, Layer.MELODY))): Run {
         val engine = DrivingEventEngine()
-        val director = MusicDirector(available = setOf(Layer.PAD, Layer.DRUMS, Layer.HIHAT, Layer.BASS, Layer.CHORDS, Layer.MELODY))
         val events = mutableListOf<DrivingEvent>()
         val cmds = mutableListOf<Pair<Long, MusicCommand>>()
         val layersAt = mutableMapOf<Long, Set<Layer>>()
@@ -65,5 +64,19 @@ class DemoDriveScenarioTest {
         assertTrue(Layer.MELODY in r.layersAt.getValue(46_000) || Layer.CHORDS in r.layersAt.getValue(46_000))
         assertTrue(Layer.DRUMS !in r.layersAt.getValue(54_000))                        // 신호 대기 브레이크다운
         assertEquals(setOf(Layer.PAD), r.layersAt[58_000])                             // 주차
+    }
+
+    @Test fun `데모 시나리오의 음악 반응(SONG 세트)`() {
+        val t8 = app.playdrive.music.MusicTiming(bars = 8)
+        val r = run(MusicDirector(t8, setOf(Layer.CHORDS, Layer.PAD, Layer.DRUMS, Layer.HIHAT, Layer.BASS, Layer.MELODY), app.playdrive.music.Arrangement.SONG))
+        val base = setOf(Layer.CHORDS, Layer.PAD)
+        assertEquals(base, r.layersAt[2_000])
+        assertEquals(base + Layer.DRUMS + Layer.HIHAT, r.layersAt[8_000])
+        assertTrue(Layer.BASS in r.layersAt.getValue(22_000))
+        assertTrue(Layer.MELODY in r.layersAt.getValue(29_000))
+        assertEquals(base, r.layersAt[31_000])
+        assertTrue(r.commands.any { (t, c) -> c == MusicCommand.RainFx(true) && t == 35_000L })
+        assertTrue(r.commands.any { (t, c) -> c == MusicCommand.RainFx(false) && t == 55_000L })
+        assertEquals(base, r.layersAt[58_000])
     }
 }

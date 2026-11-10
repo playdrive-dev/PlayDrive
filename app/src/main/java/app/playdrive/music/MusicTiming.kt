@@ -18,7 +18,8 @@ data class MusicTiming(
 enum class Quantize { NOW, BEAT, BAR }
 
 /**
- * 레이어. level = 믹스 음량, pan = -1(왼쪽)~1(오른쪽, 모노 소스에만 적용), quantize = 켜고 끄는 시점.
+ * 레이어(세트별 실제 소리: SONG = keys→CHORDS, synth→PAD, perc→HIHAT, guitar→MELODY).
+ * level = 기본 믹스 음량(세트별 값은 LoopMixer.Config.levels로 덮어씀), pan = -1(왼쪽)~1(오른쪽, 모노 소스에만 적용), quantize = 켜고 끄는 시점.
  * 스템 6종(PAD=pad_rain, DRUMS, HIHAT=hat, BASS, CHORDS, MELODY) + 신스 전용 효과 레이어 2개.
  */
 enum class Layer(val level: Float, val pan: Float, val quantize: Quantize) {
@@ -51,4 +52,6 @@ sealed interface MusicCommand {
     data object LowpassDip : MusicCommand
     data object PitchWobble : MusicCommand
     data class MasterGain(val gain: Float) : MusicCommand
+    /** 비: 전체에 로우패스 + 약한 리버브를 1마디에 걸쳐 걸고/푼다. */
+    data class RainFx(val on: Boolean) : MusicCommand
 }

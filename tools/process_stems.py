@@ -83,7 +83,7 @@ def normalize(x: np.ndarray, target_lufs: float):
     max_gain_db = PEAK_DBFS - 20 * np.log10(peak + 1e-12)
     applied = min(gain_db, max_gain_db)
     y = x * 10 ** (applied / 20)
-    return y, {"lufs_in": l0, "gain_db": round(applied, 2), "peak_limited": applied < gain_db}
+    return y, {"lufs_in": l0, "gain_db": round(applied, 2), "peak_limited": bool(applied < gain_db)}
 
 
 def encode(x: np.ndarray, name: str, loop: bool = False) -> Path:
@@ -103,7 +103,7 @@ def hf_energy(x: np.ndarray, center: int, w: int = int(0.002 * SR)) -> float:
     return float((hp ** 2).sum()) + 1e-12
 
 
-def seam_click(x: np.ndarray, seam: int, loop_len: int) -> dict:
+def seam_click(x: np.ndarray, seam: int, loop_len: int, bars: int = 4) -> dict:
     """이음매 클릭 지표.
     jump_ratio: 이음매 ±2샘플의 최대 1차 차분 / 주변 ±100ms의 99.9퍼센타일 (>1.5면 불연속)
     vs_downbeats_db: 이음매 2ms 고역 에너지 − 같은 루프 안 다른 마디 시작점(2~4마디)의 중앙값
@@ -114,21 +114,22 @@ def seam_click(x: np.ndarray, seam: int, loop_len: int) -> dict:
     local = np.concatenate([d[lo:seam - 3], d[seam + 3:hi]])
     jump = d[seam - 2:seam + 2].max()
     ref = np.percentile(local, 99.9) + 1e-9
-    bar = loop_len // 4
-    internal = [hf_energy(x, seam + k * bar) for k in (1, 2, 3)]
+    bar = loop_len // bars
+    internal = [hf_energy(x, seam + k * bar) for k in range(1, bars)]
     vs_db = 10 * np.log10(hf_energy(x, seam) / np.median(internal))
     return {"jump_ratio": round(float(jump / ref), 2), "vs_downbeats_db": round(float(vs_db), 1)}
 
 
-def check_loop(ogg: Path, name: str, orig: np.ndarray = None, natural_pos: int = None, gain_db: float = 0.0) -> dict:
+def check_loop(ogg: Path, name: str, orig: np.ndarray = None, natural_pos: int = None, gain_db: float = 0.0,
+               frames: int = LOOP_FRAMES, bars: int = 4) -> dict:
     y = read_stereo(ogg)
-    assert len(y) == LOOP_FRAMES + 2 * LOOP_PAD, f"{name}: decoded {len(y)}"
-    y = y[LOOP_PAD:LOOP_PAD + LOOP_FRAMES]
+    assert len(y) == frames + 2 * LOOP_PAD, f"{name}: decoded {len(y)}"
+    y = y[LOOP_PAD:LOOP_PAD + frames]
     PREVIEW.mkdir(parents=True, exist_ok=True)
     x3 = np.concatenate([y, y, y])
     write_wav(PREVIEW / f"{name}_x3.wav", x3)
-    seams = [seam_click(x3, len(y) * k, len(y)) for k in (1,)]  # 3회 반복 미리듣기의 1번 이음매(뒤에 3마디 여유 필요)
-    seams.append(seam_click(np.concatenate([x3, y]), len(y) * 2, len(y)))
+    seams = [seam_click(x3, len(y) * k, len(y), bars) for k in (1,)]  # 3회 반복 미리듣기의 1번 이음매
+    seams.append(seam_click(np.concatenate([x3, y]), len(y) * 2, len(y), bars))
     worst_jump = max(s["jump_ratio"] for s in seams)
     worst_burst = max(s["vs_downbeats_db"] for s in seams)
     vs_orig = None
@@ -141,7 +142,7 @@ def check_loop(ogg: Path, name: str, orig: np.ndarray = None, natural_pos: int =
     mono = x3.mean(axis=1).astype(np.float32)
     env = A.flux(A.stft_mag(mono))
     bpm, _ = A.best_tempo(env, 85, 95, 0.01)
-    return {"frames": len(y), "loop_pad": LOOP_PAD, "exact_4bars": bool(len(y) == LOOP_FRAMES), "seams": seams, "vs_original_db": vs_orig,
+    return {"frames": len(y), "loop_pad": LOOP_PAD, "exact_bars": bool(len(y) == frames), "seams": seams, "vs_original_db": vs_orig,
             "click_ok": bool(ok), "bpm_after": round(bpm, 2)}
 
 
@@ -200,6 +201,13 @@ def process_loop(path: Path, info: dict) -> dict:
 
 
 # ------------------------------------------------------------------ 원샷
+# 원샷 사용 구간(초). tools/find_tapestop.py + 피크·f0 추적 결과(dev-notes 참고):
+# Suno 'tape stop' 원샷에는 피치가 내려가는 구간이 없었다.
+#  A: 52Hz 지속 → 4.94s 타격 → 5.03~5.06s에 갑자기 무음(정지) → 5.26s 재시작  ⇒ 4.00~5.06s를 써서 '멈춤'이 들리게
+#  B: 55Hz 지속, 4.4~5.3s 동안 음량만 −16 → −31dB로 감소(페이드)            ⇒ 3.90~5.32s
+SFX_RANGES = {"sfx_tapestop_A": (4.00, 5.06), "sfx_tapestop_B": (3.90, 5.32)}
+
+
 def process_sfx(path: Path) -> dict:
     stem, var = path.stem.rsplit("_", 1)
     name = f"lofi_{stem}_{var.lower()}"
@@ -208,25 +216,95 @@ def process_sfx(path: Path) -> dict:
     thr = 10 ** (-50 / 20)
     loud = np.where(mono > thr)[0]
     a = max(0, loud[0] - int(0.005 * SR)); b = loud[-1] + 1
+    if path.stem in SFX_RANGES:
+        a, b = (int(v * SR) for v in SFX_RANGES[path.stem])
     y = x[a:b].copy()
-    fade = min(int(0.3 * SR), len(y) // 4)
+    fade = min(int(0.3 * SR), len(y) // 4) if path.stem not in SFX_RANGES else int(0.01 * SR)  # 구간 지정 시 끝은 10ms만(정지감 유지)
     y[-fade:] *= np.linspace(1, 0, fade)[:, None] ** 2
-    y[:int(0.002 * SR)] *= np.linspace(0, 1, int(0.002 * SR))[:, None]
+    fin = int(0.002 * SR) if path.stem not in SFX_RANGES else int(0.02 * SR)
+    y[:fin] *= np.linspace(0, 1, fin)[:, None]
     y, norm = normalize(y, TARGET_LUFS_SFX)
     ogg = encode(y, name)
-    return {"name": name, "src": path.name, "trim_lead_s": round(a / SR, 3), "trim_tail_s": round((len(x) - b) / SR, 3),
+    return {"name": name, "src": path.name, "range_s": [round(a / SR, 3), round(b / SR, 3)],
+            "trim_lead_s": round(a / SR, 3), "trim_tail_s": round((len(x) - b) / SR, 3),
             "length_s": round(len(y) / SR, 2), **norm, "ogg_kb": round(ogg.stat().st_size / 1024)}
+
+
+# ------------------------------------------------------------------ 한 곡 스템(v2)
+SONG_STEMS = {"drums": "1 Drums.wav", "bass": "2 Bass.wav", "guitar": "3 Guitar.wav", "keys": "4 Keyboard.wav",
+              "synth": "6 Synth.wav", "perc": "5 Percussion.wav"}
+SONG_BARS = 8
+SONG_FRAMES = int(round(SONG_BARS * BAR_S * SR))  # 1,024,000
+# 원본이 작은 스템은 −20 LUFS까지 끌어올리면 잡음이 커지므로 목표를 낮춘다(앱 레벨로 균형).
+SONG_TARGET_LUFS = {"drums": -20.0, "bass": -20.0, "guitar": -20.0, "keys": -20.0, "synth": -22.0, "perc": -24.0}
+
+
+def noise_floor_db(x: np.ndarray) -> float:
+    """50ms RMS의 5퍼센타일(dBFS) — 쉬는 구간의 바닥 잡음."""
+    w = int(0.05 * SR); n = len(x) // w
+    rms = np.sqrt((x[:n * w].reshape(n, w, -1) ** 2).mean(axis=(1, 2)))
+    return float(20 * np.log10(np.percentile(rms, 5) + 1e-12))
+
+
+def process_song(src: Path, start_bar: int) -> list:
+    g = json.loads((ROOT / "build/analysis/song.json").read_text())
+    start_s = g["first_downbeat_s"] + start_bar * g["bar_s"]
+    start = int(round(start_s * SR))
+    out = []
+    mix = None
+    for key, fname in SONG_STEMS.items():
+        x = read_stereo(src / fname)
+        loop = x[start:start + SONG_FRAMES].copy()
+        after = x[start + SONG_FRAMES:start + SONG_FRAMES + XFADE]
+        ramp = np.linspace(0, 1, XFADE)[:, None]
+        loop[:XFADE] = loop[:XFADE] * ramp + after * (1 - ramp)
+        orig_lufs = lufs_of(loop)
+        nf_before = noise_floor_db(loop)
+        loop, norm = normalize(loop, SONG_TARGET_LUFS[key])
+        nf_after = noise_floor_db(loop)
+        name = f"song_{key}"
+        ogg = encode(loop, name, loop=True)
+        r = {"name": name, "src": fname, "start_s": round(start / SR, 4), "start_sample": start, "frames": SONG_FRAMES,
+             "orig_lufs": orig_lufs, **norm, "noise_floor_before_db": round(nf_before, 1),
+             "noise_floor_after_db": round(nf_after, 1), "ogg_kb": round(ogg.stat().st_size / 1024)}
+        r.update(check_loop(ogg, name, x, start + SONG_FRAMES, norm["gain_db"], SONG_FRAMES, SONG_BARS))
+        out.append(r)
+        print(json.dumps(r, ensure_ascii=False))
+    return out
+
+
+def song_mixdown(levels: dict) -> dict:
+    """앱 레벨로 모든 song_* 레이어를 섞은 미리듣기(x3)와 피크·라우드니스."""
+    acc = None
+    for key, lv in levels.items():
+        y = read_stereo(OUT_RAW / f"song_{key}.ogg")[LOOP_PAD:LOOP_PAD + SONG_FRAMES] * lv
+        acc = y if acc is None else acc + y
+    acc *= 0.8  # LoopMixer masterGain
+    write_wav(PREVIEW / "song_mix_x3.wav", np.clip(np.concatenate([acc, acc, acc]), -1, 1))
+    return {"peak_dbfs": round(float(20 * np.log10(np.abs(acc).max())), 1), "lufs": lufs_of(np.clip(acc, -1, 1))}
 
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--src", default=str(ROOT / "assets-src/suno_raw"))
     ap.add_argument("--only", default="")
+    ap.add_argument("--song", default="", help="한 곡 스템 폴더(지정하면 그 곡만 처리)")
+    ap.add_argument("--start-bar", type=int, default=44)
     args = ap.parse_args()
     for tool in ("ffmpeg", "oggenc"):
         if not shutil.which(tool):
             sys.exit(f"{tool} 필요")
     TMP.mkdir(parents=True, exist_ok=True)
+    PREVIEW.mkdir(parents=True, exist_ok=True)
+    if args.song:
+        rep = process_song(Path(args.song), args.start_bar)
+        # 앱 기본 레벨(StemConfig.SONG_LEVELS와 같게 유지)
+        levels = {"drums": 0.80, "bass": 0.80, "keys": 0.70, "guitar": 0.60, "synth": 0.55, "perc": 0.50}
+        mixr = song_mixdown(levels)
+        print(json.dumps({"mixdown": mixr, "levels": levels}, ensure_ascii=False))
+        (PREVIEW / "song_report.json").write_text(json.dumps({"stems": rep, "mixdown": mixr, "levels": levels}, ensure_ascii=False, indent=1))
+        shutil.rmtree(TMP, ignore_errors=True)
+        return
     src = Path(args.src)
     only = set(filter(None, args.only.split(",")))
     files = [p for p in sorted(src.glob("*.wav")) if not only or p.stem in only]
@@ -244,7 +322,8 @@ def main():
         print(json.dumps(r, ensure_ascii=False))
         report.append(r)
     PREVIEW.mkdir(parents=True, exist_ok=True)
-    (PREVIEW / "report.json").write_text(json.dumps(report, ensure_ascii=False, indent=1))
+    rep_name = "report.json" if not only else f"report_{'_'.join(sorted(only))}.json"
+    (PREVIEW / rep_name).write_text(json.dumps(report, ensure_ascii=False, indent=1))
     shutil.rmtree(TMP, ignore_errors=True)
 
 

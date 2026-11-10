@@ -38,7 +38,7 @@ class DriveController(context: Context, private val listener: Listener) {
     }
 
     private val appContext = context.applicationContext
-    private val timing = MusicTiming()
+    private val timing: MusicTiming = StemConfig.timing
     private val thread = HandlerThread("PlayDrive-engine").apply { start() }
     val engineHandler = Handler(thread.looper)
     private val main = Handler(Looper.getMainLooper())
@@ -56,16 +56,13 @@ class DriveController(context: Context, private val listener: Listener) {
     /** 레이어 로드: 스템 디코딩 또는 합성(처음엔 수 초 걸릴 수 있음 → UI는 로딩 표시). 이후엔 캐시. */
     fun prepare() = engineHandler.post {
         val t0 = SystemClock.elapsedRealtime()
-        val (layerSources, cueSources) = when (StemConfig.SOURCE) {
-            StemConfig.Source.STEMS ->
-                StemConfig.layers.map { (l, id) -> OggLayerSource(appContext, l, id) } to
-                    StemConfig.cues.map { (c, id) -> OggCueSource(appContext, c, id) }
-            StemConfig.Source.SYNTH -> SynthLayerSource.all() to emptyList()
-        }
+        val layerSources = if (StemConfig.SET == StemConfig.Set.SYNTH) SynthLayerSource.all()
+            else StemConfig.layers.map { (l, id) -> OggLayerSource(appContext, l, id) }
+        val cueSources = StemConfig.cues.map { (c, id) -> OggCueSource(appContext, c, id) }
         val (pcm, cuePcm) = LayerCache(appContext.cacheDir).loadAll(layerSources, cueSources, timing)
-        val m = LoopMixer(timing, pcm, cuePcm, LoopMixer.Config(cueMaxMs = StemConfig.CUE_MAX_MS))
+        val m = LoopMixer(timing, pcm, cuePcm, LoopMixer.Config(cueMaxMs = StemConfig.CUE_MAX_MS, levels = StemConfig.levels))
         mixer = m
-        Log.i(TAG, "음원=${StemConfig.SOURCE} 레이어=${m.availableLayers} 효과음=${m.availableCues}")
+        Log.i(TAG, "세트=${StemConfig.SET} ${timing.bars}마디 레이어=${m.availableLayers} 효과음=${m.availableCues}")
         audio = AudioOutput(m, timing.sampleRate).also { it.start() }
         session = PlaybackSession(appContext, engineHandler, onPlay = { audio?.play() }, onPause = { audio?.pause() })
         val ms = SystemClock.elapsedRealtime() - t0
@@ -76,7 +73,7 @@ class DriveController(context: Context, private val listener: Listener) {
     fun start(newSource: VehicleSignalSource) = engineHandler.post {
         source?.stop()
         engine = DrivingEventEngine()
-        director = MusicDirector(timing, mixer?.availableLayers ?: Layer.entries.toSet())
+        director = MusicDirector(timing, mixer?.availableLayers ?: Layer.entries.toSet(), StemConfig.arrangement)
         recent.clear()
         mixer?.let { m -> Layer.entries.forEach { m.submit(MusicCommand.SetLayer(it, false)) } }
         session?.play()

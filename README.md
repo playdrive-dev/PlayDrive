@@ -37,5 +37,8 @@
 ## 음원
 
 - 음원: Suno 유료 플랜(Pro)으로 생성, 상업적 이용 가능.
-- 루프 스템(pad_rain, drums, hat, bass, chords, melody)과 원샷(테이프 스톱, 스크래치)을 90 BPM·4마디로 가공해 `app/src/main/res/raw/`에 OGG Vorbis로 넣었습니다. 가공 스크립트: `tools/process_stems.py`
+- 기본 음원(SONG): Suno로 만든 90 BPM 로파이 곡 한 곡을 악기별 스템(drums, bass, keys, guitar, synth, perc)으로 분리한 뒤, 모든 스템을 같은 8마디 구간으로 잘라 `app/src/main/res/raw/song_*.ogg`(OGG Vorbis)로 넣었습니다.
+- 보조 음원(LOOPS): 스템별로 따로 생성한 4마디 루프 `lofi_*.ogg`, 효과음(테이프 스톱, 스크래치) 원샷.
+- 사용할 세트는 `app/src/main/java/app/playdrive/music/stems/StemConfig.kt`에서 고릅니다(SONG / LOOPS / SYNTH).
+- 분석·가공 스크립트: `tools/analyze_song.py`, `tools/process_stems.py`, `tools/find_tapestop.py`
 - 원본 WAV는 저장소에 포함하지 않습니다.

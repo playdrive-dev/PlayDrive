@@ -233,4 +233,48 @@ class MusicTest {
         s.update(st(0, moving = true, turn = TurnSignal.RIGHT, rain = true), listOf(DrivingEvent.Departed(0)))
         assertTrue(Layer.HIHAT_FILL in s.layers && Layer.RAIN in s.layers)
     }
+
+    // ---------------------------------------------------------------- SONG 세트
+    @Test fun `SONG 편곡 - keys+synth → +drums+perc → +bass → +guitar, 비는 RainFx`() {
+        val song = setOf(Layer.CHORDS, Layer.PAD, Layer.DRUMS, Layer.HIHAT, Layer.BASS, Layer.MELODY)
+        val t8 = MusicTiming(bars = 8)
+        val d = MusicDirector(t8, song, Arrangement.SONG)
+        val bar = t8.barMs
+        d.update(st(0, gear = Gear.PARK), emptyList())
+        assertEquals(setOf(Layer.CHORDS, Layer.PAD), d.layers)
+        d.update(st(1000, moving = true), listOf(DrivingEvent.Departed(1000), DrivingEvent.SmoothAcceleration(1000, 1.5f)))
+        assertEquals(setOf(Layer.CHORDS, Layer.PAD, Layer.DRUMS, Layer.HIHAT), d.layers)
+        d.update(st(9000, moving = true), listOf(DrivingEvent.CruiseStarted(9000, 16f)))
+        assertEquals(setOf(Layer.CHORDS, Layer.PAD, Layer.DRUMS, Layer.HIHAT, Layer.BASS), d.layers)
+        d.update(st(9000 + bar * 4, moving = true), emptyList())
+        assertTrue(Layer.MELODY in d.layers)
+        val on = d.update(st(20_000, moving = true, rain = true), emptyList())
+        assertTrue(MusicCommand.RainFx(true) in on)
+        assertFalse(Layer.RAIN in d.layers)
+        val off = d.update(st(21_000, moving = true, rain = false), emptyList())
+        assertTrue(MusicCommand.RainFx(false) in off)
+        // 급제동 후 keys+synth만 남고 한 마디씩 복구
+        d.update(st(30_000, moving = true), listOf(DrivingEvent.HarshBraking(30_000, 4f, true)))
+        assertEquals(setOf(Layer.CHORDS, Layer.PAD), d.layers)
+        d.update(st(30_000 + bar, moving = true), emptyList())
+        assertEquals(3, d.layers.size)
+    }
+
+    @Test fun `비 효과는 고역을 줄이고 리버브 꼬리를 남긴다`() {
+        val m = LoopMixer(timing, testPcm)
+        m.submit(MusicCommand.SetLayer(Layer.HIHAT, true))
+        render(m, timing.barFrames * 2)
+        val b = timing.beatFrames
+        val dry = rms(render(m, b), 0, b)
+        m.submit(MusicCommand.RainFx(true))
+        render(m, timing.barFrames * 2)               // 1마디에 걸쳐 적용
+        val wet = rms(render(m, b), 0, b)
+        assertTrue("dry=$dry wet=$wet", wet < dry * 0.6)
+        m.submit(MusicCommand.SetLayer(Layer.HIHAT, false))
+        val untilBoundary = (timing.nextBoundary(m.gridFrame, timing.barFrames) - m.gridFrame).toInt()
+        render(m, untilBoundary + timing.barFrames / 2 + 200) // 다음 마디에서 0.5마디 페이드아웃 완료 직후
+        val tail = render(m, timing.sampleRate / 20)
+        assertTrue("리버브 꼬리", rms(tail, 0, timing.sampleRate / 20) > 1e-6)
+        assertTrue(tail.maxOf { kotlin.math.abs(it) } <= 1f)
+    }
 }
