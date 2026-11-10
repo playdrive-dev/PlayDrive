@@ -6,6 +6,7 @@ plugins {
 android {
     namespace = "app.playdrive"
     compileSdk = 35
+    useLibrary("android.car")
 
     defaultConfig {
         applicationId = "app.playdrive"

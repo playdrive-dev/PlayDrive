@@ -4,64 +4,74 @@ import ai.pleos.playground.vehicle.Vehicle
 import android.content.pm.PackageManager
 import android.os.Bundle
 import android.util.Log
-import android.widget.ScrollView
 import android.widget.TextView
 import androidx.activity.ComponentActivity
 import androidx.activity.result.contract.ActivityResultContracts
+import app.playdrive.signal.SignalProbes
 import app.playdrive.signal.TurnSignalProbe
 
 class MainActivity : ComponentActivity() {
 
     private lateinit var output: TextView
+    private val lines = ArrayDeque<String>()
     private var vehicle: Vehicle? = null
-    private var probe: TurnSignalProbe? = null
+    private var turnProbe: TurnSignalProbe? = null
+    private var signalProbes: SignalProbes? = null
 
     private val permissionLauncher =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-            append("권한 $PERM_LIGHTS 요청 결과: granted=$granted")
-            startProbe()
+            log("권한 $PERM_SPEED 요청 결과: granted=$granted")
+            startProbes(granted)
         }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         output = TextView(this).apply {
-            textSize = 22f
-            setPadding(48, 48, 48, 48)
-            text = getString(R.string.app_name) + "\n"
+            textSize = 16f
+            setPadding(32, 32, 32, 32)
         }
-        setContentView(ScrollView(this).apply { addView(output) })
+        setContentView(output)
 
-        if (checkSelfPermission(PERM_LIGHTS) == PackageManager.PERMISSION_GRANTED) {
-            append("권한 $PERM_LIGHTS: 이미 허용됨")
-            startProbe()
+        if (checkSelfPermission(PERM_SPEED) == PackageManager.PERMISSION_GRANTED) {
+            log("권한 $PERM_SPEED: 이미 허용됨")
+            startProbes(true)
         } else {
-            append("권한 $PERM_LIGHTS: 요청")
-            permissionLauncher.launch(PERM_LIGHTS)
+            log("권한 $PERM_SPEED: 요청")
+            permissionLauncher.launch(PERM_SPEED)
         }
     }
 
-    private fun startProbe() {
-        if (probe != null) return
+    private fun startProbes(speedPermitted: Boolean) {
+        if (vehicle != null) return
         val v = Vehicle(this)
         runCatching { v.initialize() }
-            .onSuccess { append("Vehicle.initialize() 완료") }
-            .onFailure { append("Vehicle.initialize() 실패: ${it.javaClass.simpleName}: ${it.message}") }
+            .onSuccess { log("Vehicle.initialize() 완료") }
+            .onFailure { log("Vehicle.initialize() 실패: ${it.javaClass.simpleName}: ${it.message}") }
         vehicle = v
-        probe = TurnSignalProbe(v) { msg -> runOnUiThread { append(msg) } }.also { it.start() }
+        turnProbe = TurnSignalProbe(v) { log("[Turn] $it") }.also { it.start() }
+        signalProbes = SignalProbes(this, v) { log(it) }.also { it.start(speedPermitted) }
     }
 
     override fun onDestroy() {
-        probe?.stop()
+        turnProbe?.stop()
+        signalProbes?.stop()
         vehicle?.release()
         super.onDestroy()
     }
 
-    private fun append(msg: String) {
-        Log.i(TurnSignalProbe.TAG, msg)
-        output.append("\n$msg")
+    /** 모든 스레드에서 호출 가능. logcat에 남기고 화면에는 최근 줄만 보여준다. */
+    private fun log(msg: String) {
+        Log.i(TAG, msg)
+        runOnUiThread {
+            lines.addLast(msg)
+            while (lines.size > MAX_LINES) lines.removeFirst()
+            output.text = lines.joinToString("\n")
+        }
     }
 
     companion object {
-        private const val PERM_LIGHTS = "pleos.car.permission.CAR_LIGHTS"
+        const val TAG = "PlayDrive.Sig"
+        private const val MAX_LINES = 30
+        private const val PERM_SPEED = "android.car.permission.CAR_SPEED"
     }
 }

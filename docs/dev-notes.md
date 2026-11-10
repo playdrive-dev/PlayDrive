@@ -114,3 +114,28 @@
   변경 이벤트: OFF (id=0)      ← Console Off
   ```
 - 앱 콜드 스타트(am start -W TotalTime): 2.2~3.6초(소프트웨어 GPU 에뮬레이터 기준).
+
+## 2026-11-10 — 핵심 차량 신호 확인 (속도 ✅)
+
+- GitHub: 비공개 저장소 `playdrive-dev/PlayDrive`에 main을 push. 원격 커밋 작성자·커미터가 모두 playdrive-dev(익명 noreply)인 것을 확인함.
+- 테스트 방법: `SignalProbes`(app/signal)로 Capability → 현재값 → 리스너를 확인. Virtual Console에 `PUT`으로 값을 바꾸고 logcat 시각으로 지연을 잼(heartbeat 필요, 위 Virtual Console 항목 참고).
+- AAOS는 앱이 **user 10**으로 실행됨 → adb로 권한을 줄 때는 `pm grant --user 10 app.playdrive …`. user 0에만 주면 앱에서는 거부 상태로 보임.
+
+| 신호 | 동작 | 실제 API · 권한(보호 수준) | 값 형식 · 주기 · 지연(콘솔→앱) |
+|---|---|---|---|
+| **차량 속도** | ✅ | `CarPropertyManager` `PERF_VEHICLE_SPEED`(0x11600207), `getProperty`/`registerCallback(cb, id, rate)` · `android.car.permission.CAR_SPEED` (**dangerous → 런타임 요청 필요**) | Float **m/s** (30km/h → 8.333). CONTINUOUS, 샘플링 10~20Hz(20Hz로 등록해도 실제로는 **약 10Hz**, 간격 중앙값 99ms·p95 202ms). 지연 76~270ms |
+| 기어 | ✅ | `CarPropertyManager` `GEAR_SELECTION` · `android.car.permission.CAR_POWERTRAIN` (normal) | Integer, ON_CHANGE. **P=4, D=8** (AAOS VehicleGear 상수). 지연 약 45ms(D), 약 600ms(P) |
+| 기어(SDK) | ✅ | `getGear().getCurrentGearSelectionState`, `registerGearSelection(GearSelectionListener.onSelected)` · `CAR_DRIVE`(normal) | `VehicleGear` enum: GEAR_PARK/GEAR_DRIVE/GEAR_REVERSE/GEAR_NEUTRAL… 지연 약 30ms. Capability 함수 없음 |
+| 브레이크 페달 | ✅ | `getBrake().checkBrakePedalStatusCapabilities` / `getCurrentBrakePedalStatus` / `registerBrakePedalStatus(BrakePedalStatusListener.onBrakePedalStatusUpdated(Boolean?))` · `pleos.car.permission.CAR_DRIVE`(normal) | **Boolean(밟음/안 밟음)만** 제공, 밟은 깊이(%)는 없음. 콘솔 brake>0 → true. ON_CHANGE, 지연 90~170ms. 앱 시작 시 초기값 true(P단) |
+| 와이퍼 | ✅ | `getWiper().checkWiperStateCapabilities` / `getCurrentWiperState(WindowArea(FRONT_WINDSHIELD))` / `registerWiperState(area, WiperStateListener.onWiperStateUpdated(WiperState?))` · `pleos.car.permission.CAR_WINDOWS`(normal) | `WiperState` OFF/ON/SERVICE/OTHER. 콘솔 Low → ON, Off → OFF. 단수(Low/High)는 `getCurrentWiperSwitch`로 조회만 되고 리스너 없음. 지연 약 40ms |
+| 좌석 착좌 | ⚠️ 값 반대 | `getSeat().checkSeatOccupancyCapabilities` / `getCurrentSeatOccupancy(SeatArea(SeatValue.X))` / `registerSeatOccupancy(area, SeatOccupancyListener.onSeatOccupancyUpdated(Boolean?))` · `pleos.car.permission.CAR_SEATS`(normal) | 영역: 운전석=ROW_1_LEFT, 조수석=ROW_1_RIGHT, 뒷좌석=ROW_2_LEFT/RIGHT(/CENTER). **SDK Boolean이 실제와 반대**: 콘솔 occupied=true → SDK false. 원시 VHAL 값은 정상(OCCUPIED=2, VACANT=1) → **SDK 2.3.2의 변환 버그로 추정**. 지연 약 150ms |
+| 조향각 | ✅ (부호 주의) | `getSteeringWheel().checkSteeringWheelAngleCapabilities` / `getCurrentSteeringWheelAngle` / `registerSteeringWheelAngle(SteeringWheelAngleListener.onSteeringWheelAngleUpdated(Float?))` · `pleos.car.permission.CAR_DRIVE`(normal) | Float 도(°), 범위 -470~500. **콘솔 +90 → SDK -90**(부호 반대). 값이 그대로여도 약 3초마다 같은 값이 다시 옴. 지연 약 80~170ms |
+| 방향지시등 Flash | ✅ | (3단계와 같음) | 콘솔 FlashLeft → LEFT(2), FlashRight → RIGHT(1). Blink와 구분되지 않음 |
+
+### 시사점(4~6단계 반영)
+- **속도가 앱까지 들어오므로 시연 계획은 그대로 간다.** 가감속 판단은 m/s 값을 시간으로 미분해서 계산(10Hz 샘플 → 이동평균 필요). 0.3g ≈ 2.94 m/s².
+- 콘솔에서 `controls?speed=`로 값을 바꾸면 속도가 **한 번에 점프**함(30→60km/h가 0.1초 안에) → 그대로 쓰면 "급가속"으로 판정됨. 부드러운 가감속을 시연하려면 시뮬레이션 패널이나 스크립트로 속도를 **조금씩 올리고 내리는 램프**를 보내야 함. 콘솔 화면의 페달 UI가 물리 시뮬레이션을 하는지는 6단계에서 확인.
+- 브레이크는 Boolean뿐 → "부드러운/급한 제동"은 브레이크 on 상태에서의 감속도(속도 미분)로 판단.
+- 좌석 착좌: 우리 신호 어댑터에서 값을 **뒤집는 보정 플래그**(`invertSeatOccupancy`, 기본 true)를 두고, 실차나 새 SDK에서 다시 확인. AAOS `SEAT_OCCUPANCY`를 직접 읽는 길은 `CONTROL_CAR_SEATS`(signature|privileged) 권한이라 불가. Pleos에 버그로 보고할 후보.
+- 조향: 크기와 변화율만 쓰면 부호와 무관. 좌/우가 필요하면 부호 규약을 실차에서 확인.
+- 주행 중 CPU 측정 시 속도 콜백(10Hz)을 메인 스레드에서 처리하지 말 것.
