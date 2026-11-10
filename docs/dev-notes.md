@@ -157,3 +157,36 @@
   - 하모니(0~100, 시작값 50): 주행 중 급 이벤트 후 5초가 지나면 초당 +0.8(정속 중에는 +1.5). 급가속 -10, 급제동 -15, 급조향 -8.
 - 임계값은 모두 `engine/DrivingThresholds.kt` 한 곳에 모음(data class 기본값 → 테스트에서 덮어쓰기 가능).
 - 테스트 실행: `./gradlew :app:testDebugUnitTest`
+
+## 2026-11-10 — 5단계: AdaptiveMusicEngine ✅ (단위 테스트 10개 추가, 전체 통과)
+
+### 구조
+- 순수 Kotlin(`music/`): `MusicTiming`(48kHz, 90 BPM, 4/4, 4마디 루프 = 512,000프레임 ≈ 10.67초), `Layer`, `LayerSource`(인터페이스), `Composition`, `synth/`(합성), `LoopMixer`(믹서·효과), `MusicDirector`(운전 → 음악 명령), `LayerCache`.
+- Android(`audio/`): `AudioOutput`(AudioTrack Float 48kHz 스테레오, 20ms 블록, URGENT_AUDIO 스레드), `PlaybackSession`(오디오 포커스 + MediaSession). 연결은 `DriveController`(엔진 전용 HandlerThread).
+- 실제 신호원 `signal/PleosVehicleSignalSource`: 속도·기어는 CarPropertyManager, 나머지는 Pleos SDK. **착좌 반전·조향 부호를 보정**(`Corrections`). 실패한 신호는 그 신호만 빠짐. 3단계 확인용 프로브 코드는 삭제.
+
+### 소리 설계(불협화음 방지)
+- A 단조, 마디당 코드 Am–F–C–G. 베이스·패드·멜로디는 **각 마디 코드의 구성음만** 사용 → 어떤 조합으로 켜도 어울림(테스트로 검증). 드럼·하이햇·빗소리는 음높이가 없음.
+- 레이어 7개: DRUMS, BASS, PAD, MELODY, HIHAT(기본 5개) + HIHAT_FILL(방향지시등, 박 단위 퀀타이즈), RAIN(빗소리).
+- 켜고 끄기: 다음 마디 경계(필인은 다음 박)에서 페이드 인 60ms / 아웃 150ms.
+- 효과:
+  - 급제동 = 테이프 스톱(0.6초 동안 재생 속도·피치가 0까지 떨어지고, 0.15초 이상 쉰 뒤 다음 마디 머리에서 복귀)
+  - 급가속 = 로우패스 딥(60ms 안에 380Hz까지 내려가 1박 유지, 2마디에 걸쳐 회복)
+  - 급조향 = 멜로디 피치 흔들림(1마디, 6Hz, 약 ±1.5반음)
+- 출력: 소프트 리미터로 |x| ≤ 1(레이어를 모두 켜도 클리핑 없음, 테스트로 확인).
+- 연출(`MusicDirector`): 출발 전 = 패드 → 출발 = 드럼·베이스·패드 → 급 이벤트 없이 2마디마다 하이햇 → 멜로디 추가. 급제동·급가속이면 레벨 −2, 급조향이면 −1. 신호 대기 = 브레이크다운(드럼·하이햇 빠짐). 주차 = 패드만.
+
+### 실제 스템(OGG)으로 바꾸는 방법
+- `LayerSource`를 구현해 `load(timing)`에서 OGG를 MediaExtractor/MediaCodec으로 디코딩한다(모노 Float, 길이 = loopFrames, 48kHz). 그다음 `DriveController.prepare()`의 `SynthLayerSource.all()`을 교체하고, `SYNTH_VERSION`을 올려 캐시를 무효화한다.
+- 스템 제작 규격: 90 BPM, A 단조, Am–F–C–G 4마디, 레이어별 단일 파일, 앞뒤 무음 없이 정확히 4마디(10.667초).
+
+### 에뮬레이터 측정
+- 레이어 합성: 처음엔 순차 합성으로 **9.8초**(실행 10초 기준에 아슬아슬함) → 4스레드 병렬 + 캐시 파일(`cacheDir/layers-v1`, 레이어당 2MB, 총 14MB)로 **첫 실행 3.5초, 이후 0.12초**. 첫 실행에는 화면에 "음악 준비 중…"을 표시.
+- 오디오 경로: 오디오 포커스 GAIN 받음 → 트랙이 미디어 버스(`AUDIO_DEVICE_OUT_BUS`)로 활성, Float 48kHz, 게인 0dB. 차량 미디어 볼륨 그룹 20/45, 음소거 아님. 트랙 언더런 0.
+- **에뮬레이터 소리 확인 방법**:
+  1. 에뮬레이터를 `-no-audio` 없이 실행하면(기본값) 게스트 오디오가 Mac 기본 출력 장치로 나감.
+  2. 앱 쪽 확인: `adb shell dumpsys audio`(포커스 보유자 = app.playdrive), `adb shell dumpsys media.audio_flinger`(AudioOut 스레드의 Tracks에 Active=yes, 미디어 버스 Standby: no)
+  3. Mac 쪽 확인: `pmset -g assertions`에서 coreaudiod의 `audio-out BuiltInSpeakerDevice`가 활성이면 qemu가 출력 중
+  4. 차량 볼륨: `adb shell dumpsys car_service | grep "Gain indexes"`. 에뮬레이터 화면의 볼륨 슬라이더로도 조절 가능.
+  5. 들리지 않으면 Mac 시스템 출력의 음소거·볼륨부터 확인할 것(이번 확인 때 Mac 출력이 음소거 상태였음).
+- 디버그 자동화(디버그 빌드 전용): `adb shell am start -n app.playdrive/.MainActivity --es debug demo|real|stop|layers:PAD,BASS,...|fx:TapeStop|LowpassDip|PitchWobble`
