@@ -139,3 +139,21 @@
 - 좌석 착좌: 우리 신호 어댑터에서 값을 **뒤집는 보정 플래그**(`invertSeatOccupancy`, 기본 true)를 두고, 실차나 새 SDK에서 다시 확인. AAOS `SEAT_OCCUPANCY`를 직접 읽는 길은 `CONTROL_CAR_SEATS`(signature|privileged) 권한이라 불가. Pleos에 버그로 보고할 후보.
 - 조향: 크기와 변화율만 쓰면 부호와 무관. 좌/우가 필요하면 부호 규약을 실차에서 확인.
 - 주행 중 CPU 측정 시 속도 콜백(10Hz)을 메인 스레드에서 처리하지 말 것.
+
+## 2026-11-10 — 4단계: DrivingEventEngine ✅ (단위 테스트 14/14 통과)
+
+- 위치: `app/src/main/java/app/playdrive/model/Signals.kt`(신호 모델과 `VehicleSignalSource` 인터페이스), `engine/`(순수 Kotlin, 안드로이드 의존 없음).
+- 입력 `SignalSample`: Speed(m/s), GearChanged, Brake(밟음 여부), TurnSignalChanged, Wiper(on/off), SeatOccupancy(보정 후), SteeringAngle(부호 보정 후, 양수=왼쪽).
+- 출력 `DrivingEvent`: Departed, Stopped, CruiseStarted/Ended, SmoothAcceleration/Deceleration, HarshAcceleration, HarshBraking(브레이크 밟음 여부 포함), TurnSignalOn/Off, LaneChange, HarshSteering, RainStarted/Stopped, GearChanged, Parked, OccupancyChanged(운전자 탑승, 혼자 탑승). 상태 스냅샷은 `DrivingState`(harmony 포함).
+- 판단 방식:
+  - 가속도 = 300ms 이동평균 속도를 500ms 간격으로 미분. 한 샘플짜리 튐(±1m/s)은 걸러짐(테스트로 확인).
+  - 급가속·급제동: ±2.94 m/s²(0.3g), 같은 종류는 2초 쿨다운.
+  - 부드러운 가감속: 0.5~2.94 m/s²로 같은 방향이 1초 이상 이어지면(직전 1초 안에 급 이벤트가 없을 때).
+  - 정속: 2 m/s 이상이고 |a| ≤ 0.3이 5초 이상 → 시작. |a| > 0.6이거나 정차하면 → 종료.
+  - 정차: 0.3 m/s 미만이 1초 이상. 출발: 1.0 m/s 이상.
+  - 차선 변경: 방향지시등 켬→끔이 10초 안이고, 끌 때 5 m/s 이상으로 주행 중일 때.
+  - 급조향: 조향 변화율 150°/s 이상이고 5 m/s 이상일 때. 조향각은 바뀔 때만 오므로 변화율 계산의 dt를 100~500ms로 제한.
+  - 혼자 탑승: 운전석 착좌 && 다른 좌석이 모두 비어 있음.
+  - 하모니(0~100, 시작값 50): 주행 중 급 이벤트 후 5초가 지나면 초당 +0.8(정속 중에는 +1.5). 급가속 -10, 급제동 -15, 급조향 -8.
+- 임계값은 모두 `engine/DrivingThresholds.kt` 한 곳에 모음(data class 기본값 → 테스트에서 덮어쓰기 가능).
+- 테스트 실행: `./gradlew :app:testDebugUnitTest`
