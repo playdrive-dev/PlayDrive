@@ -32,7 +32,8 @@ object StemConfig {
     // --- 효과음(모든 세트 공통, suno_raw 원샷)
     val SFX_TAPESTOP = Variant.A
     val SFX_SCRATCH = Variant.A
-    val TAPESTOP_MODE = TapeStopMode.SFX
+    /** 기본 DSP: 음악 자체가 0.7초 동안 속도·음높이가 0까지 떨어지며 로우패스로 닫히고 다음 마디에 복귀. */
+    val TAPESTOP_MODE = TapeStopMode.DSP
 
     /** process_stems.py의 LOOP_PAD와 같아야 한다(루프 OGG 앞뒤 순환 패딩 샘플 수). */
     const val LOOP_PAD_FRAMES = 4096

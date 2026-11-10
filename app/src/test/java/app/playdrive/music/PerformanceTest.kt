@@ -121,19 +121,22 @@ class PerformanceTest {
         assertTrue(stop < fast * 0.5)
     }
 
-    @Test fun `드롭 - fast 레이어는 마디 경계에서 20ms 안에 다 들어온다`() {
+    @Test fun `드롭 - fast 레이어는 다음 박 경계에서 1_16박 안에 열린다(마디를 기다리지 않음)`() {
         val t4 = MusicTiming()
         val sine = StereoPcm.mono(FloatArray(t4.loopFrames) { (0.5 * kotlin.math.sin(2 * Math.PI * 220 * it / t4.sampleRate)).toFloat() })
         val m = LoopMixer(t4, mapOf(Layer.DRUMS to sine, Layer.BASS to sine))
+        val beat = t4.beatFrames
+        val pre = FloatArray(2 * (beat + beat / 3)); m.render(pre, beat + beat / 3)   // 2박째 1/3 지점
         m.submit(MusicCommand.SetLayer(Layer.DRUMS, true, fast = true))
-        m.submit(MusicCommand.SetLayer(Layer.BASS, true))
-        val out = FloatArray(t4.barFrames * 2 * 2); m.render(out, t4.barFrames * 2)
-        val b = t4.barFrames
-        // 경계 직후 30~80ms: fast 레이어는 이미 최대, 일반 레이어는 아직 거의 0 → 합이 한 레이어 최대치에 가까움
-        val early = rms(out, b + 1440, b + 3840)
-        val full = rms(out, 2 * b - 4800, 2 * b - 2400) // 둘 다 들어온 뒤
-        assertTrue("early=$early full=$full", early > full * 0.4 && early < full * 0.65)
-        assertTrue(rms(out, 0, b - 10) == 0.0)                   // 경계 전엔 무음
+        m.submit(MusicCommand.SetLayer(Layer.BASS, true, fast = true))
+        val waitFrames = (t4.nextBoundary(m.gridFrame, beat) - m.gridFrame).toInt()
+        assertTrue(waitFrames <= beat)                                               // 최대 1박(0.67초)
+        val out = FloatArray(2 * (waitFrames + beat)); m.render(out, waitFrames + beat)
+        assertTrue(rms(out, 0, waitFrames - 1) == 0.0)                               // 경계 전엔 무음
+        val g = beat / 16
+        val opened = rms(out, waitFrames + g + 200, waitFrames + g + 2600)           // 1/16박 직후 = 이미 최대
+        val later = rms(out, waitFrames + beat / 2, waitFrames + beat / 2 + 2400)
+        assertEquals(later, opened, later * 0.05)
     }
 
     // ---------------------------------------------------------------- 연출(매핑)

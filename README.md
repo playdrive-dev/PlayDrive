@@ -22,6 +22,18 @@
    - **데모 드라이브(74초)**: 출발 드롭 → 부드러운 가속(아르페지오) → 정속 → 방향지시등(셰이커)·차선 변경 → 부드러운 제동(근음+5도) → 신호 대기 브레이크다운 → 재출발 드롭 → 비 → 급제동(테이프스톱) → 회복 → 정차 → 주차 순서로 차량 신호를 주입해 음악 반응을 보여줍니다.
    - **실제 차량 신호**: 차량(또는 에뮬레이터 Virtual Console)의 속도·기어·브레이크·방향지시등·와이퍼·조향·착좌 신호로 연주합니다. 속도 권한(`android.car.permission.CAR_SPEED`)을 허용해야 합니다.
 
+## 화면
+
+| 무드(정차) | 무드(주행 중) | 주차 후 1분 제안 |
+|---|---|---|
+| ![](docs/screens/01_mood_parked_intro.png) | ![](docs/screens/02_mood_driving.png) | ![](docs/screens/03_park_offer.png) |
+| **1분 호흡** | **마음 앨범** | **호흡 후 앨범** |
+| ![](docs/screens/04_breath.png) | ![](docs/screens/05_album.png) | ![](docs/screens/06_album_after_breath.png) |
+
+- 주행 중에는 단색 배경과 추상 그래픽, 재생/일시정지 버튼만 보입니다(글자·숫자·알림 없음, CarUxRestrictions 연동).
+- 주차(P단) 후 운전석에만 사람이 있을 때 "1분 숨 고르기"를 제안합니다. 동승자가 있으면 제안하지 않습니다.
+- 마음 앨범: 주행 한 번이 앨범 한 장이 됩니다. 커버는 그날 운전의 부드러움·비·시간대로 그린 추상 그래픽이고, 회고 한 줄은 정차 중에만 남길 수 있습니다. 기록은 기기 안에만 저장합니다.
+
 ## 테스트 환경 및 필요한 설정
 
 - 에뮬레이터: Pleos Connect v2.1.0 (API 34, arm64), 차량 서비스 2.3.22
@@ -29,6 +41,8 @@
 - 사용 SDK: Pleos Vehicle SDK `ai.pleos.playground:Vehicle:2.3.2`(Vehicle State, 읽기 전용), AAOS `CarPropertyManager`
 - 사용 권한(읽기 전용): `android.car.permission.CAR_SPEED`, `android.car.permission.CAR_POWERTRAIN`, `pleos.car.permission.CAR_DRIVE`, `CAR_LIGHTS`, `CAR_WINDOWS`, `CAR_SEATS`
 - 단위 테스트: `./gradlew :app:testDebugUnitTest`
+- 디버그 빌드 화면 바로 열기: `adb shell am start -n app.playdrive/.MainActivity --es debug <명령>`
+  - `demo`(74초 데모 드라이브), `screen:mood`, `screen:drive`(주행 중 모습), `screen:park`(주차 후 1분 제안), `screen:breath`, `screen:album`, `seed:albums`(예시 앨범 3장)
 
 ## APK
 

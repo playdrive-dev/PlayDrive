@@ -1,3 +1,18 @@
 <resources>
     <string name="app_name">PlayDrive</string>
+    <!-- 주차 후 1분 (정차 중에만 표시) -->
+    <string name="breath_offer_title">도착했어요. 1분만 숨 고르고 갈까요?</string>
+    <string name="breath_offer_body">오늘 드라이브의 곡을 작게 틀어 두고, 원에 맞춰 천천히 들이쉬고 내쉬어요.</string>
+    <string name="breath_accept">좋아요</string>
+    <string name="breath_decline">다음에요</string>
+    <string name="breath_inhale">들이쉬고</string>
+    <string name="breath_exhale">내쉬고</string>
+    <string name="breath_done">편안한 하루 보내세요</string>
+    <!-- 마음 앨범 -->
+    <string name="album_title">마음 앨범</string>
+    <string name="album_empty">아직 앨범이 없어요. 오늘의 드라이브가 첫 장이 됩니다.</string>
+    <string name="album_reflection_hint">오늘의 드라이브를 한 줄로 남겨 보세요</string>
+    <string name="album_reflection_save">남기기</string>
+    <string name="album_new">새 앨범이 생겼어요</string>
+    <string name="album_driving_locked">정차 중에 남길 수 있어요</string>
 </resources>

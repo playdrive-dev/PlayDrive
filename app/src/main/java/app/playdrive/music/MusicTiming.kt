@@ -44,7 +44,7 @@ class StereoPcm(val left: FloatArray, val right: FloatArray) {
 }
 
 sealed interface MusicCommand {
-    /** fast = 드롭: 페이드 대신 20ms로 바로 들어옴(같은 마디 경계에 맞춰). */
+    /** fast = 드롭: 다음 '박' 경계에서 1/16박 페이드로 바로 열림(끄기는 일반 퀀타이즈). */
     data class SetLayer(val layer: Layer, val on: Boolean, val fast: Boolean = false) : MusicCommand
     /** 급제동·급가속 = TAPE_STOP, 급조향(급차선변경) = SCRATCH. 즉시 반응 + 음악 덕킹. */
     data class PlayCue(val cue: Cue) : MusicCommand

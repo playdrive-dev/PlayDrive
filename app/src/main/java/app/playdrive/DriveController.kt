@@ -6,6 +6,11 @@ import android.os.HandlerThread
 import android.os.Looper
 import android.os.SystemClock
 import android.util.Log
+import app.playdrive.album.Album
+import app.playdrive.album.AlbumNaming
+import app.playdrive.album.AlbumStore
+import app.playdrive.album.BreathCoach
+import app.playdrive.album.DriveRecorder
 import app.playdrive.audio.AudioOutput
 import app.playdrive.audio.PlaybackSession
 import app.playdrive.engine.DrivingEvent
@@ -36,6 +41,9 @@ class DriveController(context: Context, private val listener: Listener) {
         fun onPrepared(elapsedMs: Long)
         fun onUpdate(state: DrivingState, recentEvents: List<DrivingEvent>, layers: Set<Layer>, debug: String)
         fun onSourceFinished()
+        fun onPlayingChanged(playing: Boolean) {}
+        /** 주행 한 번이 끝남(출발 후 P단): 새 앨범과 '주차 후 1분' 제안 여부. */
+        fun onDriveFinished(album: Album, suggestBreath: Boolean) {}
     }
 
     private val appContext = context.applicationContext
@@ -53,6 +61,10 @@ class DriveController(context: Context, private val listener: Listener) {
     private val recent = ArrayDeque<DrivingEvent>()
     private var lastUiMs = 0L
     private var lastDbgLogMs = 0L
+    private val recorder = DriveRecorder { System.currentTimeMillis() }
+    val albums = AlbumStore(java.io.File(appContext.filesDir, "albums.json"))
+    @Volatile var playing = false; private set
+    val totalLayers: Int get() = mixer?.availableLayers?.size ?: Layer.entries.size
 
     /** 레이어 로드: 스템 디코딩 또는 합성(처음엔 수 초 걸릴 수 있음 → UI는 로딩 표시). 이후엔 캐시. */
     fun prepare() = engineHandler.post {
@@ -66,7 +78,8 @@ class DriveController(context: Context, private val listener: Listener) {
         mixer = m
         Log.i(TAG, "세트=${StemConfig.SET} ${timing.bars}마디 레이어=${m.availableLayers} 효과음=${m.availableCues}")
         audio = AudioOutput(m, timing.sampleRate).also { it.start() }
-        session = PlaybackSession(appContext, engineHandler, onPlay = { audio?.play() }, onPause = { audio?.pause() })
+        session = PlaybackSession(appContext, engineHandler,
+            onPlay = { audio?.play(); setPlaying(true) }, onPause = { audio?.pause(); setPlaying(false) })
         val ms = SystemClock.elapsedRealtime() - t0
         Log.i(TAG, "레이어 준비 완료 ${ms}ms")
         main.post { listener.onPrepared(ms) }
@@ -98,6 +111,17 @@ class DriveController(context: Context, private val listener: Listener) {
         thread.quitSafely()
     }
 
+    private fun setPlaying(p: Boolean) { playing = p; main.post { listener.onPlayingChanged(p) } }
+
+    /** 재생/일시정지(무드 화면의 유일한 조작). */
+    fun togglePlay() = engineHandler.post { if (playing) session?.pause() else session?.play() }
+
+    /** '주차 후 1분' 동안 오늘의 곡을 아주 작게(keys+synth 그대로, 마스터만 낮춤). */
+    fun setBreathMode(on: Boolean) = engineHandler.post {
+        mixer?.submit(MusicCommand.MasterGain(if (on) 0.25f else 0.8f))
+        if (on && !playing) session?.play()
+    }
+
     /** 디버그: 레이어 직접 토글(소리 확인용). */
     fun debugCommand(cmd: MusicCommand) = engineHandler.post {
         if (audio != null) { session?.play(); mixer?.submit(cmd) }
@@ -108,6 +132,13 @@ class DriveController(context: Context, private val listener: Listener) {
     private fun process(sample: SignalSample) {
         val events = engine.onSample(sample)
         val cmds = director.update(engine.state, events)
+        recorder.update(engine.state, events)?.let { summary ->
+            val album = Album(summary.startEpochMs, summary, AlbumNaming.title(summary))
+            albums.add(album)
+            val suggest = BreathCoach.shouldSuggest(engine.state, justFinishedDrive = true)
+            Log.i(TAG, "주행 끝 → 앨범 '${album.title}', 주차 후 1분 제안=$suggest")
+            main.post { listener.onDriveFinished(album, suggest) }
+        }
         val m = mixer
         if (m != null) cmds.forEach(m::submit)
         events.forEach { e ->

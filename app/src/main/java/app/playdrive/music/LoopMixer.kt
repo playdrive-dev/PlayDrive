@@ -65,7 +65,8 @@ class LoopMixer(
     private val panR = FloatArray(n) { sin((Layer.entries[it].pan + 1) * PI / 4).toFloat() * sqrt(2f) }
     private val fadeInStep = 1f / (config.fadeInBars * timing.barFrames)
     private val fadeOutStep = 1f / (config.fadeOutBars * timing.barFrames)
-    private val fastStep = 1f / (0.02f * sr)
+    /** 드롭: 1/16박 페이드(90 BPM이면 약 42ms). */
+    private val fastStep = 1f / (timing.beatFrames / 16f)
     private val fastIn = BooleanArray(n)
 
     private val queue = ConcurrentLinkedQueue<MusicCommand>()
@@ -105,7 +106,10 @@ class LoopMixer(
     private var rainCounter = 0
 
     // DSP 효과(신스 모드)
-    private val tapeRampFrames = (0.6 * sr).toLong()
+    /** 테이프 스톱: 0.7초 동안 재생 속도·음높이가 함께 0까지, 그사이 로우패스가 18k → 300Hz로 닫힘. */
+    private val tapeRampFrames = (0.7 * sr).toLong()
+    private val tapeL = Biquad(); private val tapeR = Biquad()
+    private var tapeLpCounter = 0
     private var tapeStart = -1L
     private var tapeResume = -1L
     private var resumeFadeLeft = 0
@@ -198,7 +202,18 @@ class LoopMixer(
                 l = fl + reverb.outL; r = fr + reverb.outR
             }
 
-            // 5b) 로우패스 딥
+            // 5b) 테이프 스톱 로우패스(램프 동안 닫힘)
+            if (tapeStart >= 0 && gridFrame - tapeStart < tapeRampFrames) {
+                if (tapeLpCounter-- <= 0) {
+                    tapeLpCounter = 32
+                    val p = (gridFrame - tapeStart).toDouble() / tapeRampFrames
+                    tapeL.setLowpass(18_000.0 * exp(ln(300.0 / 18_000.0) * p * p), sr, 0.707)
+                    tapeR.setLowpass(18_000.0 * exp(ln(300.0 / 18_000.0) * p * p), sr, 0.707)
+                }
+                l = tapeL.process(l); r = tapeR.process(r)
+            }
+
+            // 5c) 로우패스 딥
             if (lpStart >= 0) {
                 if (lpCounter-- <= 0) { lpCounter = 32; updateLowpass() }
                 if (lpStart >= 0) { l = lpL.process(l); r = lpR.process(r) }
@@ -265,6 +280,7 @@ class LoopMixer(
     private fun startTapeStop() {
         if (tapeStart >= 0) return
         tapeStart = gridFrame
+        tapeL.reset(); tapeR.reset(); tapeLpCounter = 0
         tapeResume = timing.nextBoundary(gridFrame + tapeRampFrames + (0.15 * sr).toLong(), timing.barFrames)
         performance?.silence(gridFrame, tapeResume)
     }
@@ -272,7 +288,9 @@ class LoopMixer(
     private fun schedule(layer: Layer, on: Boolean, fast: Boolean = false) {
         val i = layer.ordinal
         pending.removeAll { it.layer == i }
-        val at = when (layer.quantize) {
+        // 드롭(fast로 켜기)은 다음 '박'에서 연다(최대 1박 = 0.67초). 브레이크다운 등 일반 전환은 레이어 단위(마디).
+        val q = if (fast && on) Quantize.BEAT else layer.quantize
+        val at = when (q) {
             Quantize.NOW -> gridFrame
             Quantize.BEAT -> timing.nextBoundary(gridFrame, timing.beatFrames)
             Quantize.BAR -> timing.nextBoundary(gridFrame, timing.barFrames)

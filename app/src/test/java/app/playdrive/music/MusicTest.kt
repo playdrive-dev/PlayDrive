@@ -120,12 +120,12 @@ class MusicTest {
         val during = render(m, sr / 4)
         // 0.2~0.25초 시점에 이미 음량이 확실히 줄었다(반응 0.25초 이내)
         assertTrue(rms(during, sr / 5, sr / 4) < before * 0.75)
-        // 램프(0.6초) 후 완전 정지
-        render(m, sr * 4 / 10)
+        // 램프(0.7초) 후 완전 정지
+        render(m, sr * 5 / 10)
         val silent = render(m, sr / 10)
         assertTrue(rms(silent, 0, sr / 10) < 1e-4)
         // 다음 마디 경계 이후 복귀
-        val resumeAt = timing.nextBoundary(stopStart + (0.75 * sr).toLong(), timing.barFrames)
+        val resumeAt = timing.nextBoundary(stopStart + (0.85 * sr).toLong(), timing.barFrames)
         render(m, (resumeAt - m.gridFrame).toInt())
         val back = render(m, sr / 10)
         assertTrue(rms(back, sr / 20, sr / 10) > before * 0.9)
@@ -176,7 +176,7 @@ class MusicTest {
         m.submit(MusicCommand.SetLayer(Layer.PAD, true))
         render(m, timing.barFrames * 2)
         m.submit(MusicCommand.PlayCue(Cue.TAPE_STOP))
-        render(m, (0.7 * timing.sampleRate).toInt())
+        render(m, (0.8 * timing.sampleRate).toInt())
         val silent = render(m, timing.sampleRate / 20)
         assertTrue(rms(silent, 0, timing.sampleRate / 20) < 1e-4)
     }
