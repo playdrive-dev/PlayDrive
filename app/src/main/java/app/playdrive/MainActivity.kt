@@ -44,7 +44,7 @@ class MainActivity : ComponentActivity(), DriveController.Listener {
         root.addView(status)
 
         val row1 = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        row1.addView(button("데모 드라이브 (60초)") { controller.start(DemoDriveSource(controller.engineHandler) { controller.notifyFinished() }); status.text = "데모 드라이브 재생 중" })
+        row1.addView(button("데모 드라이브 (74초)") { controller.start(DemoDriveSource(controller.engineHandler) { controller.notifyFinished() }); status.text = "데모 드라이브 재생 중" })
         row1.addView(button("실제 차량 신호") { requestSpeedThenStart() })
         row1.addView(button("정지") { controller.stop(); status.text = "정지" })
         root.addView(row1)

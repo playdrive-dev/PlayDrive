@@ -19,7 +19,7 @@
    adb install -r app/build/outputs/apk/debug/app-debug.apk
    ```
 4. 앱을 실행하면 음원을 불러온 뒤(첫 실행 약 2초) 버튼이 활성화됩니다.
-   - **데모 드라이브(60초)**: 출발 → 부드러운 가속 → 정속 → 차선 변경 → 급제동 → 회복 → 비 → 정차 → 주차 순서로 차량 신호를 주입해 음악 반응을 보여줍니다.
+   - **데모 드라이브(74초)**: 출발 드롭 → 부드러운 가속(아르페지오) → 정속 → 방향지시등(셰이커)·차선 변경 → 부드러운 제동(근음+5도) → 신호 대기 브레이크다운 → 재출발 드롭 → 비 → 급제동(테이프스톱) → 회복 → 정차 → 주차 순서로 차량 신호를 주입해 음악 반응을 보여줍니다.
    - **실제 차량 신호**: 차량(또는 에뮬레이터 Virtual Console)의 속도·기어·브레이크·방향지시등·와이퍼·조향·착좌 신호로 연주합니다. 속도 권한(`android.car.permission.CAR_SPEED`)을 허용해야 합니다.
 
 ## 테스트 환경 및 필요한 설정
@@ -42,3 +42,4 @@
 - 사용할 세트는 `app/src/main/java/app/playdrive/music/stems/StemConfig.kt`에서 고릅니다(SONG / LOOPS / SYNTH).
 - 분석·가공 스크립트: `tools/analyze_song.py`, `tools/process_stems.py`, `tools/find_tapestop.py`
 - 원본 WAV는 저장소에 포함하지 않습니다.
+- 반응형 연주 레이어(로즈풍 FM 음, 셰이커)는 앱 안에서 코드로 합성합니다(외부 음원 없음).

@@ -24,6 +24,8 @@ class LoopMixer(
     layerPcm: Map<Layer, StereoPcm>,
     cuePcm: Map<Cue, StereoPcm> = emptyMap(),
     private val config: Config = Config(),
+    /** 반응형 연주 레이어(없으면 연주 명령 무시). */
+    val performance: PerformanceLayer? = null,
 ) {
     data class Config(
         /** 레이어 페이드 길이(마디). 요구: 0.5~1마디. */
@@ -41,6 +43,11 @@ class LoopMixer(
         /** 비 효과: 로우패스 차단 주파수와 리버브 젖은 비율. */
         val rainCutoffHz: Double = 1_800.0,
         val rainReverbWet: Float = 0.18f,
+        /** 속도 톤: 0km/h 차단 주파수, 밝아지는 속도, 정차 시 리버브. 스무딩 시간(초). */
+        val speedMinCutoffHz: Double = 700.0,
+        val speedBrightKmh: Float = 60f,
+        val speedReverbWetAtStop: Float = 0.16f,
+        val speedSmoothingS: Float = 0.5f,
     )
 
     private val sr = timing.sampleRate
@@ -58,9 +65,11 @@ class LoopMixer(
     private val panR = FloatArray(n) { sin((Layer.entries[it].pan + 1) * PI / 4).toFloat() * sqrt(2f) }
     private val fadeInStep = 1f / (config.fadeInBars * timing.barFrames)
     private val fadeOutStep = 1f / (config.fadeOutBars * timing.barFrames)
+    private val fastStep = 1f / (0.02f * sr)
+    private val fastIn = BooleanArray(n)
 
     private val queue = ConcurrentLinkedQueue<MusicCommand>()
-    private data class Pending(val layer: Int, val on: Boolean, val atFrame: Long)
+    private data class Pending(val layer: Int, val on: Boolean, val atFrame: Long, val fast: Boolean)
     private val pending = ArrayList<Pending>()
 
     /** 박자 격자 시계(프레임). 테이프 스톱 중에도 계속 흐른다. */
@@ -81,6 +90,11 @@ class LoopMixer(
     private var duckReleaseAt = -1L
     private val duckAttackStep = (1f - config.duckGain) / (config.duckAttackMs * sr / 1000f)
     private val duckReleaseStep = (1f - config.duckGain) / (0.5f * timing.barFrames)
+
+    // 속도 톤(0 = 정차·먹먹, 1 = 밝음). 명령이 없으면 1(필터 없음)
+    private var speedNorm = 1f
+    private var speedTarget = 1f
+    private val speedAlpha = 1f - exp(-1.0 / (config.speedSmoothingS * sr)).toFloat()
 
     // 비 효과(로우패스 + 리버브), rainMix 0→1을 1마디에 걸쳐
     private var rainTarget = 0f
@@ -160,19 +174,26 @@ class LoopMixer(
                     l += sample(p.left, pos) * k; r += sample(p.right, pos) * k
                 }
             }
+            // 4b) 반응형 연주 레이어(같은 격자 시계)
+            val perf = performance
+            if (perf != null) { perf.process(gridFrame); l += perf.outL; r += perf.outR }
+
             val mg = masterGain * tapeGain * duck
             l *= mg; r *= mg
 
-            // 5a) 비: 로우패스(차단 주파수를 rainMix로 18k→rainCutoff) + 리버브
+            // 5a) 톤: 속도(0.5초 스무딩)와 비가 함께 정하는 로우패스 + 리버브
+            speedNorm += (speedTarget - speedNorm) * speedAlpha
             if (rainMix != rainTarget) rainMix = if (rainMix < rainTarget) (rainMix + rainStep).coerceAtMost(rainTarget) else (rainMix - rainStep).coerceAtLeast(rainTarget)
-            if (rainMix > 0f || reverb.active) {
+            val toneActive = speedNorm < 0.999f || rainMix > 0f
+            if (toneActive || reverb.active) {
                 if (rainCounter-- <= 0) {
                     rainCounter = 64
-                    val hz = 18_000.0 * exp(ln(config.rainCutoffHz / 18_000.0) * rainMix)
+                    val speedHz = config.speedMinCutoffHz * exp(ln(18_000.0 / config.speedMinCutoffHz) * speedNorm)
+                    val hz = (speedHz * exp(ln(config.rainCutoffHz / 18_000.0) * rainMix)).coerceIn(300.0, 18_000.0)
                     rainL.setLowpass(hz, sr, 0.707); rainR.setLowpass(hz, sr, 0.707)
                 }
                 val fl = rainL.process(l); val fr = rainR.process(r)
-                val wet = config.rainReverbWet * rainMix
+                val wet = config.rainReverbWet * rainMix + config.speedReverbWetAtStop * (1f - speedNorm)
                 reverb.process(fl, fr, wet)
                 l = fl + reverb.outL; r = fr + reverb.outR
             }
@@ -205,7 +226,7 @@ class LoopMixer(
 
     private fun stepGain(i: Int): Float {
         val g = gain[i]; val t = target[i]
-        if (g < t) gain[i] = (g + fadeInStep).coerceAtMost(t)
+        if (g < t) { gain[i] = (g + if (fastIn[i]) fastStep else fadeInStep).coerceAtMost(t); if (gain[i] >= t) fastIn[i] = false }
         else if (g > t) gain[i] = (g - fadeOutStep).coerceAtLeast(t)
         return gain[i]
     }
@@ -213,13 +234,15 @@ class LoopMixer(
     private fun drainCommands() {
         while (true) {
             when (val c = queue.poll() ?: break) {
-                is MusicCommand.SetLayer -> schedule(c.layer, c.on)
+                is MusicCommand.SetLayer -> schedule(c.layer, c.on, c.fast)
                 is MusicCommand.PlayCue -> playCue(c.cue)
                 MusicCommand.TapeStop -> startTapeStop()
                 MusicCommand.LowpassDip -> { lpStart = gridFrame; lpL.reset(); lpR.reset() }
                 MusicCommand.PitchWobble -> wobbleStart = gridFrame
                 is MusicCommand.MasterGain -> masterGain = c.gain
                 is MusicCommand.RainFx -> rainTarget = if (c.on) 1f else 0f
+                is MusicCommand.SpeedTone -> speedTarget = (c.kmh / config.speedBrightKmh).coerceIn(0f, 1f)
+                is MusicCommand.PerfArp, MusicCommand.PerfRootFifth, is MusicCommand.PerfShaker -> performance?.command(c, gridFrame)
             }
         }
     }
@@ -232,6 +255,7 @@ class LoopMixer(
         }
         cueVoice = p
         cuePos = 0
+        if (cue == Cue.TAPE_STOP) performance?.silence(gridFrame, timing.nextBoundary(gridFrame + minOf(p.frames, (config.cueMaxMs * sr / 1000).toInt()), timing.barFrames))
         cueEnd = minOf(p.frames, (config.cueMaxMs * sr / 1000).toInt())
         duckTarget = config.duckGain
         // 효과음이 거의 끝나는 시점 이후의 첫 마디 경계에서 음악 복귀
@@ -242,9 +266,10 @@ class LoopMixer(
         if (tapeStart >= 0) return
         tapeStart = gridFrame
         tapeResume = timing.nextBoundary(gridFrame + tapeRampFrames + (0.15 * sr).toLong(), timing.barFrames)
+        performance?.silence(gridFrame, tapeResume)
     }
 
-    private fun schedule(layer: Layer, on: Boolean) {
+    private fun schedule(layer: Layer, on: Boolean, fast: Boolean = false) {
         val i = layer.ordinal
         pending.removeAll { it.layer == i }
         val at = when (layer.quantize) {
@@ -253,14 +278,14 @@ class LoopMixer(
             Quantize.BAR -> timing.nextBoundary(gridFrame, timing.barFrames)
         }
         val due = if (tapeStart >= 0) maxOf(at, tapeResume) else at
-        pending += Pending(i, on, due)
+        pending += Pending(i, on, due, fast)
     }
 
     private fun applyDue() {
         val it = pending.iterator()
         while (it.hasNext()) {
             val p = it.next()
-            if (p.atFrame <= gridFrame) { target[p.layer] = if (p.on) 1f else 0f; it.remove() }
+            if (p.atFrame <= gridFrame) { target[p.layer] = if (p.on) 1f else 0f; fastIn[p.layer] = p.on && p.fast; it.remove() }
         }
     }
 

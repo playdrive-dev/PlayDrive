@@ -44,7 +44,8 @@ class StereoPcm(val left: FloatArray, val right: FloatArray) {
 }
 
 sealed interface MusicCommand {
-    data class SetLayer(val layer: Layer, val on: Boolean) : MusicCommand
+    /** fast = 드롭: 페이드 대신 20ms로 바로 들어옴(같은 마디 경계에 맞춰). */
+    data class SetLayer(val layer: Layer, val on: Boolean, val fast: Boolean = false) : MusicCommand
     /** 급제동·급가속 = TAPE_STOP, 급조향(급차선변경) = SCRATCH. 즉시 반응 + 음악 덕킹. */
     data class PlayCue(val cue: Cue) : MusicCommand
     /** DSP 효과(신스 모드 대체·디버그용). */
@@ -54,4 +55,14 @@ sealed interface MusicCommand {
     data class MasterGain(val gain: Float) : MusicCommand
     /** 비: 전체에 로우패스 + 약한 리버브를 1마디에 걸쳐 걸고/푼다. */
     data class RainFx(val on: Boolean) : MusicCommand
+    /** 속도 → 전체 로우패스·리버브(0km/h 먹먹 ↔ 60km/h 이상 밝음), 믹서에서 0.5초 스무딩. */
+    data class SpeedTone(val kmh: Float) : MusicCommand
+
+    // --- 반응형 연주 레이어(PerformanceLayer). 모두 8분음표 격자에 맞춰 시작.
+    /** 부드러운 가속 구간: 박마다 코드톤 상행 아르페지오(4음 후 처음으로). */
+    data class PerfArp(val on: Boolean) : MusicCommand
+    /** 부드러운 브레이크 시작: 현재 코드 근음 + 5도 한 번. */
+    data object PerfRootFifth : MusicCommand
+    /** 방향지시등: 8분음표마다 셰이커, 끄면 마디 끝까지 치고 멈춤. */
+    data class PerfShaker(val on: Boolean) : MusicCommand
 }

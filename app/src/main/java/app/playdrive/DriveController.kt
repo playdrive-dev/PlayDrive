@@ -19,6 +19,7 @@ import app.playdrive.music.LoopMixer
 import app.playdrive.music.MusicCommand
 import app.playdrive.music.MusicDirector
 import app.playdrive.music.MusicTiming
+import app.playdrive.music.PerformanceLayer
 import app.playdrive.music.stems.OggCueSource
 import app.playdrive.music.stems.OggLayerSource
 import app.playdrive.music.stems.StemConfig
@@ -60,7 +61,8 @@ class DriveController(context: Context, private val listener: Listener) {
             else StemConfig.layers.map { (l, id) -> OggLayerSource(appContext, l, id) }
         val cueSources = StemConfig.cues.map { (c, id) -> OggCueSource(appContext, c, id) }
         val (pcm, cuePcm) = LayerCache(appContext.cacheDir).loadAll(layerSources, cueSources, timing)
-        val m = LoopMixer(timing, pcm, cuePcm, LoopMixer.Config(cueMaxMs = StemConfig.CUE_MAX_MS, levels = StemConfig.levels))
+        val perf = PerformanceLayer(timing, StemConfig.chordTimeline, StemConfig.PERF_LEVEL)
+        val m = LoopMixer(timing, pcm, cuePcm, LoopMixer.Config(cueMaxMs = StemConfig.CUE_MAX_MS, levels = StemConfig.levels), perf)
         mixer = m
         Log.i(TAG, "세트=${StemConfig.SET} ${timing.bars}마디 레이어=${m.availableLayers} 효과음=${m.availableCues}")
         audio = AudioOutput(m, timing.sampleRate).also { it.start() }
@@ -112,7 +114,7 @@ class DriveController(context: Context, private val listener: Listener) {
             Log.i(TAG, "이벤트 $e")
             recent.addLast(e); while (recent.size > 12) recent.removeFirst()
         }
-        cmds.forEach { Log.i(TAG, "음악 $it") }
+        cmds.filter { it !is MusicCommand.SpeedTone }.forEach { Log.i(TAG, "음악 $it") }
         val now = SystemClock.elapsedRealtime()
         if (events.isNotEmpty() || now - lastUiMs >= 250) {
             lastUiMs = now

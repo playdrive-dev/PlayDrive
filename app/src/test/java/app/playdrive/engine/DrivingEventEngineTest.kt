@@ -97,13 +97,13 @@ class DrivingEventEngineTest {
         assertEquals(1, d.count<DrivingEvent.CruiseEnded>())
     }
 
-    @Test fun `완전히 서고 1초 지나면 Stopped, 다시 출발하면 Departed`() {
+    @Test fun `완전히 서고 2초 지나면 Stopped, 다시 출발하면 Departed`() {
         val d = Drive()
         d.ramp(1.5f, 6000)   // 9 m/s
         d.ramp(-2f, 4500)    // 0 m/s 도달
-        d.hold(500)
-        assertEquals(0, d.count<DrivingEvent.Stopped>())
         d.hold(1500)
+        assertEquals(0, d.count<DrivingEvent.Stopped>())
+        d.hold(1000)
         assertEquals(1, d.count<DrivingEvent.Stopped>())
         assertFalse(d.engine.state.moving)
         d.ramp(1.0f, 3000)

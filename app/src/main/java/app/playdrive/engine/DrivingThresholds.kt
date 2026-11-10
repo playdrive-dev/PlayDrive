@@ -31,7 +31,8 @@ data class DrivingThresholds(
 
     // --- 정차·출발 ---
     val stoppedSpeedMps: Float = 0.3f,
-    val stoppedMinDurationMs: Long = 1_000,
+    /** 신호 대기 판단: 속도 0이 2초 이상(브레이크다운 기준). */
+    val stoppedMinDurationMs: Long = 2_000,
     val departSpeedMps: Float = 1.0f,
 
     // --- 차선 변경(방향지시등) ---

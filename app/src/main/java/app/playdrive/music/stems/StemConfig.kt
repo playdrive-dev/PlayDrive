@@ -2,6 +2,7 @@ package app.playdrive.music.stems
 
 import app.playdrive.R
 import app.playdrive.music.Arrangement
+import app.playdrive.music.ChordTimeline
 import app.playdrive.music.Cue
 import app.playdrive.music.Layer
 import app.playdrive.music.MusicTiming
@@ -54,6 +55,16 @@ object StemConfig {
         Set.SONG -> Arrangement.SONG
         Set.LOOPS -> Arrangement.LOOPS
         Set.SYNTH -> Arrangement.SYNTH
+    }
+
+    /** 반응형 연주 레이어 음량(배경보다 살짝 작게). */
+    const val PERF_LEVEL = 0.45f
+
+    /** 연주 레이어가 따르는 코드 타임라인. */
+    val chordTimeline: ChordTimeline get() = when (SET) {
+        Set.SONG -> ChordTimeline.SONG
+        Set.LOOPS -> ChordTimeline.LOOPS
+        Set.SYNTH -> ChordTimeline.SYNTH
     }
 
     val levels: Map<Layer, Float> get() = if (SET == Set.SONG) SONG_LEVELS else emptyMap()

@@ -224,8 +224,8 @@ class MusicTest {
         d.update(st(0, moving = true), listOf(DrivingEvent.Departed(0), DrivingEvent.SmoothAcceleration(0, 1f), DrivingEvent.CruiseStarted(0, 15f)))
         d.update(st(1000, moving = false), listOf(DrivingEvent.Stopped(1000)))
         assertFalse(Layer.DRUMS in d.layers); assertTrue(Layer.BASS in d.layers)
-        d.update(st(2000, moving = true, turn = TurnSignal.LEFT), listOf(DrivingEvent.Departed(2000)))
-        assertTrue(Layer.HIHAT in d.layers)
+        val turnCmds = d.update(st(2000, moving = true, turn = TurnSignal.LEFT), listOf(DrivingEvent.Departed(2000)))
+        assertTrue(MusicCommand.PerfShaker(true) in turnCmds)              // 방향지시등 → 연주 레이어 셰이커
         d.update(st(3000, gear = Gear.PARK), listOf(DrivingEvent.Parked(3000)))
         assertEquals(setOf(Layer.PAD), d.layers)
         // 신스 모드(필인·빗소리 레이어 있음)
@@ -235,17 +235,17 @@ class MusicTest {
     }
 
     // ---------------------------------------------------------------- SONG 세트
-    @Test fun `SONG 편곡 - keys+synth → +drums+perc → +bass → +guitar, 비는 RainFx`() {
+    @Test fun `SONG 편곡 - keys+synth → 출발 drums+bass 드롭 → +perc → +guitar, 비는 RainFx`() {
         val song = setOf(Layer.CHORDS, Layer.PAD, Layer.DRUMS, Layer.HIHAT, Layer.BASS, Layer.MELODY)
         val t8 = MusicTiming(bars = 8)
         val d = MusicDirector(t8, song, Arrangement.SONG)
         val bar = t8.barMs
         d.update(st(0, gear = Gear.PARK), emptyList())
         assertEquals(setOf(Layer.CHORDS, Layer.PAD), d.layers)
-        d.update(st(1000, moving = true), listOf(DrivingEvent.Departed(1000), DrivingEvent.SmoothAcceleration(1000, 1.5f)))
-        assertEquals(setOf(Layer.CHORDS, Layer.PAD, Layer.DRUMS, Layer.HIHAT), d.layers)
+        d.update(st(1000, moving = true), listOf(DrivingEvent.Departed(1000)))
+        assertEquals(setOf(Layer.CHORDS, Layer.PAD, Layer.DRUMS, Layer.BASS), d.layers)
         d.update(st(9000, moving = true), listOf(DrivingEvent.CruiseStarted(9000, 16f)))
-        assertEquals(setOf(Layer.CHORDS, Layer.PAD, Layer.DRUMS, Layer.HIHAT, Layer.BASS), d.layers)
+        assertEquals(setOf(Layer.CHORDS, Layer.PAD, Layer.DRUMS, Layer.BASS, Layer.HIHAT), d.layers)
         d.update(st(9000 + bar * 4, moving = true), emptyList())
         assertTrue(Layer.MELODY in d.layers)
         val on = d.update(st(20_000, moving = true, rain = true), emptyList())
@@ -253,7 +253,6 @@ class MusicTest {
         assertFalse(Layer.RAIN in d.layers)
         val off = d.update(st(21_000, moving = true, rain = false), emptyList())
         assertTrue(MusicCommand.RainFx(false) in off)
-        // 급제동 후 keys+synth만 남고 한 마디씩 복구
         d.update(st(30_000, moving = true), listOf(DrivingEvent.HarshBraking(30_000, 4f, true)))
         assertEquals(setOf(Layer.CHORDS, Layer.PAD), d.layers)
         d.update(st(30_000 + bar, moving = true), emptyList())

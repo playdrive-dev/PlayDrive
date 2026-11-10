@@ -2,7 +2,9 @@ package app.playdrive.music
 
 import app.playdrive.engine.DrivingEvent
 import app.playdrive.engine.DrivingState
+import app.playdrive.model.Gear
 import app.playdrive.model.TurnSignal
+import kotlin.math.abs
 
 /**
  * 편곡: 단계별로 더해지는 레이어, 신호 대기 때 빠지는 레이어, 비 처리 방식.
@@ -13,21 +15,30 @@ data class Arrangement(
     val stages: List<List<Layer>>,
     val breakdownDrop: Set<Layer> = setOf(Layer.DRUMS, Layer.HIHAT),
     val rain: RainMode = RainMode.NONE,
+    /** true면 출발(D + 속도 증가) 시 단계1 레이어를 다음 다운비트에 페이드 없이 '드롭'. */
+    val dropOnDepart: Boolean = false,
+    /** 방향지시등 때 합류시킬 필인 레이어(신스 세트). 없으면 연주 레이어 셰이커만. */
+    val turnFillLayer: Layer? = null,
 ) {
     enum class RainMode { NONE, LAYER, FX }
 
     companion object {
-        /** 한 곡 스템: keys+synth → +drums(+perc) → +bass → +guitar. 비 = 로우패스+리버브. */
+        /**
+         * 한 곡 스템: 정차 = keys+synth → 출발 = drums+bass '드롭'(다음 다운비트) → 안정 주행 = +perc → 오래 부드러운 주행 = +guitar.
+         * 신호 대기(정차 2초 이상) = keys+synth만(+ 속도 0 로우패스로 브레이크다운). 비 = 로우패스+리버브.
+         */
         val SONG = Arrangement(
-            stages = listOf(listOf(Layer.CHORDS, Layer.PAD), listOf(Layer.DRUMS, Layer.HIHAT), listOf(Layer.BASS), listOf(Layer.MELODY)),
+            stages = listOf(listOf(Layer.CHORDS, Layer.PAD), listOf(Layer.DRUMS, Layer.BASS), listOf(Layer.HIHAT), listOf(Layer.MELODY)),
+            breakdownDrop = setOf(Layer.DRUMS, Layer.BASS, Layer.HIHAT, Layer.MELODY),
             rain = RainMode.FX,
+            dropOnDepart = true,
         )
         /** 개별 루프(v1): pad_rain → +drums+hat → +bass+chords → +melody. */
         val LOOPS = Arrangement(
             stages = listOf(listOf(Layer.PAD), listOf(Layer.DRUMS, Layer.HIHAT), listOf(Layer.BASS, Layer.CHORDS), listOf(Layer.MELODY)),
         )
         /** 신스 플레이스홀더: LOOPS와 같고 빗소리 레이어 사용. */
-        val SYNTH = LOOPS.copy(rain = RainMode.LAYER)
+        val SYNTH = LOOPS.copy(rain = RainMode.LAYER, turnFillLayer = Layer.HIHAT_FILL)
     }
 }
 
@@ -41,6 +52,12 @@ data class Arrangement(
  * 다음 마디부터 한 마디에 하나씩(단계 순서대로) 복구. 단계는 유지하되 승급 시간은 다시 잰다.
  * 비: LAYER = RAIN 레이어, FX = 전체 로우패스+리버브(RainFx), NONE = 무시.
  *
+ * 반응형 연주(PerformanceLayer, 모두 8분음표 격자):
+ *  - 속도 → SpeedTone(1km/h 이상 바뀔 때)
+ *  - 부드러운 가속(SmoothAcceleration ~ 가속도 0.3 m/s² 미만) → PerfArp
+ *  - 주행 중 브레이크를 밟기 시작 → PerfRootFifth
+ *  - 방향지시등 → PerfShaker
+ *
  * @param available 실제로 소리가 있는 레이어
  */
 class MusicDirector(
@@ -49,6 +66,13 @@ class MusicDirector(
     private val arrangement: Arrangement = Arrangement.SYNTH,
 ) {
     private var rainFxOn = false
+    private var lastSpeedKmh = Float.NaN
+    private var arpOn = false
+    private var shakerOn = false
+    private var brakeWas = false
+    private var dropPending = false
+    /** 브레이크를 밟은 시각 — 0.4초 동안 급제동이 아니면 근음+5도. */
+    private var rootFifthCheckAt: Long? = null
     var stage = 0
         private set
     private var departedOnce = false
@@ -68,11 +92,18 @@ class MusicDirector(
             is DrivingEvent.Departed -> {
                 parked = false
                 if (!departedOnce) { departedOnce = true; stageSinceMs = now; calmSinceMs = now }
+                if (arrangement.dropOnDepart) {
+                    if (stage < 1) setStage(1, now)
+                    if (state.gear == Gear.DRIVE) dropPending = true
+                }
             }
-            is DrivingEvent.SmoothAcceleration -> if (departedOnce && stage < 1) setStage(1, now)
+            is DrivingEvent.SmoothAcceleration -> {
+                if (departedOnce && stage < 1) setStage(1, now)
+                if (state.moving && !arpOn) { arpOn = true; out += MusicCommand.PerfArp(true) }
+            }
             is DrivingEvent.CruiseStarted -> if (departedOnce && stage < 2) setStage(2, now)
             is DrivingEvent.Parked -> { parked = true; departedOnce = false; stage = 0; recoverSinceMs = null }
-            is DrivingEvent.HarshBraking, is DrivingEvent.HarshAcceleration -> harsh(Cue.TAPE_STOP, now, out)
+            is DrivingEvent.HarshBraking, is DrivingEvent.HarshAcceleration -> { harsh(Cue.TAPE_STOP, now, out); arpOn = false; rootFifthCheckAt = null }
             is DrivingEvent.HarshSteering -> harsh(Cue.SCRATCH, now, out)
             else -> Unit
         }
@@ -88,21 +119,43 @@ class MusicDirector(
             }
         }
 
+        // --- 반응형 연주
+        val kmh = state.speedMps * 3.6f
+        if (lastSpeedKmh.isNaN() || abs(kmh - lastSpeedKmh) >= 1f) { lastSpeedKmh = kmh; out += MusicCommand.SpeedTone(kmh) }
+        if (arpOn && (!state.moving || state.accelMps2 < 0.3f || state.brakePressed)) { arpOn = false; out += MusicCommand.PerfArp(false) }
+        // 부드러운 브레이크 시작: 밟고 0.4초 동안 감속이 약하면(급제동이 아니면) 근음+5도
+        if (state.brakePressed && !brakeWas && state.moving && state.speedMps >= 2f) rootFifthCheckAt = now + ROOT_FIFTH_CONFIRM_MS
+        rootFifthCheckAt?.let { at ->
+            if (!state.brakePressed || state.accelMps2 <= -HARD_DECEL_MPS2) rootFifthCheckAt = null
+            else if (now >= at) { rootFifthCheckAt = null; out += MusicCommand.PerfRootFifth }
+        }
+        brakeWas = state.brakePressed
+        val turn = state.turnSignal != TurnSignal.OFF
+        if (turn != shakerOn) { shakerOn = turn; out += MusicCommand.PerfShaker(turn) }
+
         if (arrangement.rain == Arrangement.RainMode.FX && state.raining != rainFxOn) {
             rainFxOn = state.raining
             out += MusicCommand.RainFx(rainFxOn)
         }
 
         val want = desiredLayers(state, now)
+        val drop = if (dropPending && state.moving) arrangement.stages.getOrNull(1).orEmpty().toSet() else emptySet()
+        if (dropPending && state.moving) dropPending = false
         for (l in Layer.entries) {
             val on = l in want
-            if (on != (l in current)) out += MusicCommand.SetLayer(l, on)
+            if (on != (l in current)) out += MusicCommand.SetLayer(l, on, fast = on && l in drop)
         }
         current = want
         return out
     }
 
     private fun setStage(s: Int, now: Long) { stage = s; stageSinceMs = now }
+
+    companion object {
+        /** 브레이크 시작 후 급제동 여부를 지켜보는 시간과, '부드럽지 않다'로 보는 감속(급제동 2.94보다 낮게). */
+        const val ROOT_FIFTH_CONFIRM_MS = 400L
+        const val HARD_DECEL_MPS2 = 2.0f
+    }
 
     private fun harsh(cue: Cue, now: Long, out: MutableList<MusicCommand>) {
         out += MusicCommand.PlayCue(cue)
@@ -129,10 +182,8 @@ class MusicDirector(
         }
         val set = ordered.toMutableSet()
         if (s.raining && arrangement.rain == Arrangement.RainMode.LAYER) set += Layer.RAIN
-        if (s.turnSignal != TurnSignal.OFF && !parked && departedOnce) {
-            // 방향지시등: 필인 레이어가 있으면 필인, 없으면 하이햇(perc)을 합류
-            set += if (Layer.HIHAT_FILL in available) Layer.HIHAT_FILL else Layer.HIHAT
-        }
+        val fill = arrangement.turnFillLayer
+        if (fill != null && s.turnSignal != TurnSignal.OFF && !parked && departedOnce) set += fill
         return set.filter { it in available }.toSet()
     }
 }

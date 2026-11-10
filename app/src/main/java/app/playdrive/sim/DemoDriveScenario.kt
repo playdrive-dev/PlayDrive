@@ -6,30 +6,35 @@ import app.playdrive.model.SignalSample
 import app.playdrive.model.TurnSignal
 
 /**
- * 시연용 약 60초 주행 시나리오(순수 Kotlin). 시간 t는 시나리오 시작 기준 ms.
+ * 시연용 약 74초 주행 시나리오(순수 Kotlin). 시간 t는 시나리오 시작 기준 ms.
+ * 반응형 연주 6개 장면이 모두 한 번 이상 나오도록 구성:
  *
- *  0s  P단, 운전자 혼자 착좌, 브레이크 밟음  → 인트로(패드)
- *  3s  D단 / 4.5s 브레이크 놓음
- *  5~15s  0→60km/h 부드러운 가속(1.67 m/s²)   → 비트 시작, 레이어 쌓임
- * 15~30s  60km/h 정속                         → 정속
- * 21~25s  왼쪽 방향지시등 + 완만한 조향 → 차선 변경 → 하이햇 필인
- * 30~31.5s 급제동 60→35km/h(4.6 m/s²)         → 테이프 스톱, 레이어 감소
- * 32.5~38.5s 35→50km/h 부드러운 가속            → 회복
- * 35s  와이퍼 ON(비)                           → 빗소리
- * 46~52s 50→0km/h 부드러운 감속(2.3 m/s²)       → 정차 → 브레이크다운
- * 55s  와이퍼 OFF / 56s P단                     → 주차, 아웃트로
+ *  0s     P단, 혼자 탑승, 속도 0          → keys+synth 인트로, 먹먹한 톤(① 속도 톤)
+ *  3s     D단 / 4.5s 브레이크 놓음
+ *  5~14s  0→50km/h 부드러운 가속(1.5 m/s²) → ⑤ 출발 드롭(drums+bass, 다음 다운비트), ② 상행 아르페지오, 톤이 밝아짐
+ * 14~24s  50km/h 정속                       → +perc
+ * 18~22.5s 왼쪽 방향지시등 + 완만한 조향    → ④ 셰이커 8분음표(끈 뒤 마디 끝까지), 차선 변경
+ * 24s     브레이크 시작, 24~30s 50→0 부드러운 감속 → ③ 근음+5도
+ * 30~37s  신호 대기(7초)                    → ⑤ 2초 후 브레이크다운(keys+synth만 + 먹먹)
+ * 36.5s   브레이크 놓음, 37.5~44.5s 0→55km/h → ⑤ 출발 드롭 + ② 아르페지오
+ * 44.5~53s 55km/h 정속, 46~52s 비(와이퍼)  → 비: 로우패스+리버브
+ * 53~54.5s 급제동 55→30km/h(4.6 m/s²)       → ⑥ 테이프스톱(연주 레이어도 멈춤), 한 마디씩 복구
+ * 55.5~60.5s 30→45km/h 부드러운 재가속, 62s 브레이크 → ③ 근음+5도, 62~69s 45→0(1.8 m/s²)
+ * 69~74s  정차 → 72s P단                    → 주차
  */
 object DemoDriveScenario {
-    const val DURATION_MS = 60_000L
+    const val DURATION_MS = 74_000L
     private const val KMH = 1f / 3.6f
 
     /** (시각 ms, 속도 m/s) 꼭짓점 — 사이는 선형. */
     private val speedPoints = listOf(
         0L to 0f, 5_000L to 0f,
-        15_000L to 60 * KMH, 30_000L to 60 * KMH,
-        31_500L to 35 * KMH, 32_500L to 35 * KMH,
-        38_500L to 50 * KMH, 46_000L to 50 * KMH,
-        52_000L to 0f, DURATION_MS to 0f,
+        14_000L to 50 * KMH, 24_000L to 50 * KMH,
+        30_000L to 0f, 37_500L to 0f,
+        44_500L to 55 * KMH, 53_000L to 55 * KMH,
+        54_500L to 30 * KMH, 55_500L to 30 * KMH,
+        60_500L to 45 * KMH, 62_000L to 45 * KMH,
+        69_000L to 0f, DURATION_MS to 0f,
     )
 
     fun speedAt(t: Long): Float {
@@ -54,17 +59,19 @@ object DemoDriveScenario {
         0L to { at -> SignalSample.SteeringAngle(at, 0f) },
         3_000L to { at -> SignalSample.GearChanged(at, Gear.DRIVE) },
         4_500L to { at -> SignalSample.Brake(at, false) },
-        21_000L to { at -> SignalSample.TurnSignalChanged(at, TurnSignal.LEFT) },
-        22_500L to { at -> SignalSample.SteeringAngle(at, 8f) },
-        23_500L to { at -> SignalSample.SteeringAngle(at, -6f) },
-        24_500L to { at -> SignalSample.SteeringAngle(at, 0f) },
-        25_000L to { at -> SignalSample.TurnSignalChanged(at, TurnSignal.OFF) },
-        30_000L to { at -> SignalSample.Brake(at, true) },
-        31_500L to { at -> SignalSample.Brake(at, false) },
-        35_000L to { at -> SignalSample.Wiper(at, true) },
-        46_000L to { at -> SignalSample.Brake(at, true) },
-        55_000L to { at -> SignalSample.Wiper(at, false) },
-        56_000L to { at -> SignalSample.GearChanged(at, Gear.PARK) },
+        18_000L to { at -> SignalSample.TurnSignalChanged(at, TurnSignal.LEFT) },
+        19_500L to { at -> SignalSample.SteeringAngle(at, 6f) },
+        20_500L to { at -> SignalSample.SteeringAngle(at, -4f) },
+        21_500L to { at -> SignalSample.SteeringAngle(at, 0f) },
+        22_500L to { at -> SignalSample.TurnSignalChanged(at, TurnSignal.OFF) },
+        24_000L to { at -> SignalSample.Brake(at, true) },
+        36_500L to { at -> SignalSample.Brake(at, false) },
+        46_000L to { at -> SignalSample.Wiper(at, true) },
+        52_000L to { at -> SignalSample.Wiper(at, false) },
+        53_000L to { at -> SignalSample.Brake(at, true) },
+        54_500L to { at -> SignalSample.Brake(at, false) },
+        62_000L to { at -> SignalSample.Brake(at, true) },
+        72_000L to { at -> SignalSample.GearChanged(at, Gear.PARK) },
     )
 
     /** (fromExclusive, toInclusive] 구간의 이산 신호 + to 시점 속도 샘플. baseMs는 절대시각 원점. */

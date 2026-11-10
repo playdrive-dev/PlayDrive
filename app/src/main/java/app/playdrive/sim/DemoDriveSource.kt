@@ -10,7 +10,7 @@ class DemoDriveSource(
     private val handler: Handler,
     private val onFinished: () -> Unit = {},
 ) : VehicleSignalSource {
-    override val name = "데모 드라이브(60초)"
+    override val name = "데모 드라이브(74초)"
     private var startMs = 0L
     private var lastT = -1L
     private var sink: SignalSink? = null
