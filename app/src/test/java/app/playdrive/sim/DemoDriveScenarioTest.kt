@@ -16,7 +16,7 @@ class DemoDriveScenarioTest {
 
     private fun run(): Run {
         val engine = DrivingEventEngine()
-        val director = MusicDirector()
+        val director = MusicDirector(available = setOf(Layer.PAD, Layer.DRUMS, Layer.HIHAT, Layer.BASS, Layer.CHORDS, Layer.MELODY))
         val events = mutableListOf<DrivingEvent>()
         val cmds = mutableListOf<Pair<Long, MusicCommand>>()
         val layersAt = mutableMapOf<Long, Set<Layer>>()
@@ -53,18 +53,17 @@ class DemoDriveScenarioTest {
         assertTrue(r.events.filterIsInstance<DrivingEvent.OccupancyChanged>().last().solo)
     }
 
-    @Test fun `데모 시나리오의 음악 반응`() {
+    @Test fun `데모 시나리오의 음악 반응(스템 매핑)`() {
         val r = run()
         println(r.layersAt.toSortedMap().entries.joinToString("\n") { "%4ds %s".format(it.key / 1000, it.value) })
-        assertEquals(setOf(Layer.PAD), r.layersAt[2_000])                              // 인트로
-        assertTrue(Layer.DRUMS in r.layersAt.getValue(8_000))                          // 출발 → 비트
-        assertTrue(Layer.MELODY in r.layersAt.getValue(20_000))                        // 레이어가 쌓임
-        assertTrue(Layer.HIHAT_FILL in r.layersAt.getValue(23_000))                    // 방향지시등 필인
-        assertTrue(r.commands.any { (t, c) -> c == MusicCommand.TapeStop && t in 30_000..32_000 }) // 급제동
-        assertTrue(Layer.MELODY !in r.layersAt.getValue(32_000))                       // 레이어 감소
-        assertTrue(Layer.MELODY in r.layersAt.getValue(46_000))                        // 회복
-        assertTrue(Layer.RAIN in r.layersAt.getValue(40_000))                          // 비
-        assertTrue(Layer.DRUMS !in r.layersAt.getValue(54_000))                        // 정차 브레이크다운
-        assertEquals(setOf(Layer.PAD), r.layersAt[58_000])                             // 주차 아웃트로
+        assertEquals(setOf(Layer.PAD), r.layersAt[2_000])                              // 정차
+        assertEquals(setOf(Layer.PAD, Layer.DRUMS, Layer.HIHAT), r.layersAt[8_000])    // 부드러운 가속
+        assertTrue(Layer.BASS in r.layersAt.getValue(22_000) && Layer.CHORDS in r.layersAt.getValue(22_000)) // 정속
+        assertTrue(r.commands.any { (t, c) -> c == MusicCommand.PlayCue(app.playdrive.music.Cue.TAPE_STOP) && t in 30_000..32_000 })
+        assertEquals(setOf(Layer.PAD), r.layersAt[31_000])                             // 급제동 직후
+        assertTrue(r.layersAt.getValue(36_000).size in 2..4)                           // 한 마디씩 복구 중
+        assertTrue(Layer.MELODY in r.layersAt.getValue(46_000) || Layer.CHORDS in r.layersAt.getValue(46_000))
+        assertTrue(Layer.DRUMS !in r.layersAt.getValue(54_000))                        // 신호 대기 브레이크다운
+        assertEquals(setOf(Layer.PAD), r.layersAt[58_000])                             // 주차
     }
 }

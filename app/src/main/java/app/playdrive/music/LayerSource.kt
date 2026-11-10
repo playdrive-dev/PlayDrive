@@ -1,13 +1,21 @@
 package app.playdrive.music
 
 /**
- * 레이어 한 개의 PCM 공급원. 지금은 코드 합성(SynthLayerSource),
- * 나중에 실제 스템(OGG)을 디코딩하는 구현으로 갈아 끼운다.
+ * 레이어 한 개의 PCM 공급원. 코드 합성(SynthLayerSource) 또는 실제 스템(OggLayerSource).
  *
- * 계약: 반환 배열은 모노 Float PCM, 길이 = timing.loopFrames(4마디), 같은 BPM·조성,
- * 루프 끝과 처음이 자연스럽게 이어질 것(꼬리는 앞부분에 겹쳐 넣는다), 피크 ≤ 1.
+ * 계약: 반환 PCM은 48kHz Float, 길이 = timing.loopFrames(정확히 4마디), 90 BPM·A단조,
+ * 루프 끝과 처음이 자연스럽게 이어질 것, 피크 ≤ 1.
  */
 interface LayerSource {
     val layer: Layer
-    fun load(timing: MusicTiming): FloatArray
+    /** 캐시 키(내용이 바뀌면 달라져야 함). */
+    val cacheKey: String
+    fun load(timing: MusicTiming): StereoPcm
+}
+
+/** 원샷 효과음 공급원. */
+interface CueSource {
+    val cue: Cue
+    val cacheKey: String
+    fun load(sampleRate: Int): StereoPcm
 }

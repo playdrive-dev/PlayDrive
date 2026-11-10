@@ -4,6 +4,7 @@ import app.playdrive.music.Composition
 import app.playdrive.music.Layer
 import app.playdrive.music.LayerSource
 import app.playdrive.music.MusicTiming
+import app.playdrive.music.StereoPcm
 import kotlin.math.PI
 import kotlin.math.exp
 import kotlin.math.sin
@@ -12,7 +13,11 @@ import kotlin.random.Random
 /** 실제 음원이 준비되기 전, 코드로 합성한 플레이스홀더 레이어(같은 BPM·조성·4마디). */
 class SynthLayerSource(override val layer: Layer) : LayerSource {
 
-    override fun load(timing: MusicTiming): FloatArray {
+    override val cacheKey = "synth-$VERSION-${layer.name}"
+
+    override fun load(timing: MusicTiming): StereoPcm = StereoPcm.mono(render(timing))
+
+    private fun render(timing: MusicTiming): FloatArray {
         val buf = LoopBuffer(timing.loopFrames)
         val sr = timing.sampleRate
         val beat = timing.beatFrames
@@ -42,6 +47,14 @@ class SynthLayerSource(override val layer: Layer) : LayerSource {
                     buf.tone(sr, at(b, 0f), bar, midiHz(m), Wavetable.softSaw, 0.5f, env, detuneCents = det)
                 }
                 buf.lowpass(sr, 1400.0)
+                buf.normalize(0.7f)
+            }
+            Layer.CHORDS -> {
+                // 로즈 느낌의 코드 스탭: 1박, 2.5박에 짧게
+                val env = Envelope(0.004f, 0.35f, 0.25f, 0.2f)
+                for (b in 0 until timing.bars) for (hit in listOf(0f to 1f, 2.5f to 0.7f)) for (m in Composition.pad[b]) {
+                    buf.tone(sr, at(b, hit.first), (0.9f * beat).toInt(), midiHz(m + 12), Wavetable.softTri, hit.second, env)
+                }
                 buf.normalize(0.7f)
             }
             Layer.MELODY -> {
@@ -91,6 +104,8 @@ class SynthLayerSource(override val layer: Layer) : LayerSource {
     }
 
     companion object {
+        /** 합성 코드·작곡을 바꾸면 올린다(캐시 무효화). */
+        const val VERSION = "2"
         fun all(): List<LayerSource> = Layer.entries.map { SynthLayerSource(it) }
     }
 }

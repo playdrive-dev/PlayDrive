@@ -96,7 +96,7 @@ class MainActivity : ComponentActivity(), DriveController.Listener {
     private var pendingIntent: Intent? = null
 
     override fun onPrepared(elapsedMs: Long) {
-        status.text = "준비 완료 (레이어 합성 ${elapsedMs}ms)"
+        status.text = "준비 완료 (음원 로드 ${elapsedMs}ms)"
         buttons.forEach { it.isEnabled = true }
         prepared = true
         pendingIntent?.let { handleDebugIntent(it) }; pendingIntent = null
@@ -112,6 +112,7 @@ class MainActivity : ComponentActivity(), DriveController.Listener {
      *  adb shell am start -n app.playdrive/.MainActivity --es debug demo
      *  adb shell am start -n app.playdrive/.MainActivity --es debug layers:PAD,BASS,DRUMS
      *  adb shell am start -n app.playdrive/.MainActivity --es debug fx:TapeStop|LowpassDip|PitchWobble
+     *  adb shell am start -n app.playdrive/.MainActivity --es debug cue:TAPE_STOP|SCRATCH
      *  adb shell am start -n app.playdrive/.MainActivity --es debug stop
      */
     private fun handleDebugIntent(intent: Intent) {
@@ -127,6 +128,8 @@ class MainActivity : ComponentActivity(), DriveController.Listener {
                 debugLayers.clear(); debugLayers += want
                 status.text = "레이어 수동: ${want.joinToString()}"
             }
+            cmd.startsWith("cue:") -> app.playdrive.music.Cue.entries.find { it.name == cmd.removePrefix("cue:") }
+                ?.let { controller.debugCommand(MusicCommand.PlayCue(it)) }
             cmd.startsWith("fx:") -> when (cmd.removePrefix("fx:")) {
                 "TapeStop" -> controller.debugCommand(MusicCommand.TapeStop)
                 "LowpassDip" -> controller.debugCommand(MusicCommand.LowpassDip)

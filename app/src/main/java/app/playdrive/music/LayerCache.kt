@@ -8,38 +8,52 @@ import java.util.concurrent.Callable
 import java.util.concurrent.Executors
 
 /**
- * 레이어 PCM 로더: 캐시 파일이 있으면 바로 읽고, 없으면 여러 코어로 병렬 합성한 뒤 저장한다.
- * version을 올리면(합성 코드·작곡 변경 시) 캐시가 무효화된다.
+ * 레이어·효과음 PCM 로더: 캐시 파일(cacheKey별)이 있으면 바로 읽고, 없으면 여러 코어로 병렬 로드
+ * (합성 또는 OGG 디코딩)한 뒤 저장한다. 파일 형식: [left Float LE × n][right Float LE × n] (모노면 left만).
  */
-class LayerCache(private val dir: File, private val version: String) {
+class LayerCache(private val dir: File) {
 
-    fun loadAll(sources: List<LayerSource>, timing: MusicTiming): Map<Layer, FloatArray> {
-        val d = File(dir, "layers-$version-${timing.sampleRate}-${timing.bpm}").apply { mkdirs() }
-        dir.listFiles { f -> f.name.startsWith("layers-") && f != d }?.forEach { it.deleteRecursively() }
+    fun loadAll(layers: List<LayerSource>, cues: List<CueSource>, timing: MusicTiming): Pair<Map<Layer, StereoPcm>, Map<Cue, StereoPcm>> {
+        val d = File(dir, "pcm-v2").apply { mkdirs() }
+        val keep = (layers.map { it.cacheKey } + cues.map { it.cacheKey }).map { "$it.f32" }.toSet()
+        d.listFiles()?.filter { it.name !in keep }?.forEach { it.delete() }
+        dir.listFiles { f -> f.name.startsWith("layers-") }?.forEach { it.deleteRecursively() } // v1 캐시 정리
         val pool = Executors.newFixedThreadPool(Runtime.getRuntime().availableProcessors().coerceIn(1, 4))
         try {
-            return sources.map { src ->
-                pool.submit(Callable {
-                    val f = File(d, "${src.layer.name}.f32")
-                    val cached = if (f.length() == timing.loopFrames * 4L) read(f, timing.loopFrames) else null
-                    src.layer to (cached ?: src.load(timing).also { write(f, it) })
-                })
-            }.associate { it.get() }
+            val lf = layers.map { s -> pool.submit(Callable { s.layer to cached(File(d, "${s.cacheKey}.f32")) { s.load(timing) } }) }
+            val cf = cues.map { s -> pool.submit(Callable { s.cue to cached(File(d, "${s.cacheKey}.f32")) { s.load(timing.sampleRate) } }) }
+            return lf.associate { it.get() } to cf.associate { it.get() }
         } finally {
             pool.shutdown()
         }
     }
 
-    private fun read(f: File, n: Int): FloatArray = RandomAccessFile(f, "r").use { raf ->
-        val buf = raf.channel.map(FileChannel.MapMode.READ_ONLY, 0, n * 4L).order(ByteOrder.LITTLE_ENDIAN).asFloatBuffer()
-        FloatArray(n).also { buf.get(it) }
+    private fun cached(f: File, load: () -> StereoPcm): StereoPcm {
+        read(f)?.let { return it }
+        return load().also { write(f, it) }
     }
 
-    private fun write(f: File, data: FloatArray) {
+    private fun read(f: File): StereoPcm? {
+        if (!f.exists() || f.length() < 8) return null
+        return RandomAccessFile(f, "r").use { raf ->
+            val bb = raf.channel.map(FileChannel.MapMode.READ_ONLY, 0, raf.length()).order(ByteOrder.LITTLE_ENDIAN)
+            val stereo = bb.getInt(0) == 2
+            val n = bb.getInt(4)
+            bb.position(8)
+            val fb = bb.slice().order(ByteOrder.LITTLE_ENDIAN).asFloatBuffer()
+            val l = FloatArray(n).also { fb.get(it) }
+            if (stereo) StereoPcm(l, FloatArray(n).also { fb.get(it) }) else StereoPcm.mono(l)
+        }
+    }
+
+    private fun write(f: File, p: StereoPcm) {
         val tmp = File(f.path + ".tmp")
+        val ch = if (p.isMono) 1 else 2
         RandomAccessFile(tmp, "rw").use { raf ->
-            val bb = raf.channel.map(FileChannel.MapMode.READ_WRITE, 0, data.size * 4L).order(ByteOrder.LITTLE_ENDIAN)
-            bb.asFloatBuffer().put(data)
+            val bb = raf.channel.map(FileChannel.MapMode.READ_WRITE, 0, 8L + 4L * p.frames * ch).order(ByteOrder.LITTLE_ENDIAN)
+            bb.putInt(ch); bb.putInt(p.frames)
+            val fb = bb.slice().order(ByteOrder.LITTLE_ENDIAN).asFloatBuffer()
+            fb.put(p.left); if (ch == 2) fb.put(p.right)
         }
         tmp.renameTo(f)
     }

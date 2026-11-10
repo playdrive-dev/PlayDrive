@@ -19,6 +19,9 @@ import app.playdrive.music.LoopMixer
 import app.playdrive.music.MusicCommand
 import app.playdrive.music.MusicDirector
 import app.playdrive.music.MusicTiming
+import app.playdrive.music.stems.OggCueSource
+import app.playdrive.music.stems.OggLayerSource
+import app.playdrive.music.stems.StemConfig
 import app.playdrive.music.synth.SynthLayerSource
 
 /**
@@ -50,23 +53,30 @@ class DriveController(context: Context, private val listener: Listener) {
     private var lastUiMs = 0L
     private var lastDbgLogMs = 0L
 
-    /** 레이어 합성(수 초 걸릴 수 있음 → UI는 로딩 표시). */
+    /** 레이어 로드: 스템 디코딩 또는 합성(처음엔 수 초 걸릴 수 있음 → UI는 로딩 표시). 이후엔 캐시. */
     fun prepare() = engineHandler.post {
         val t0 = SystemClock.elapsedRealtime()
-        val pcm = LayerCache(appContext.cacheDir, SYNTH_VERSION).loadAll(SynthLayerSource.all(), timing)
-        val m = LoopMixer(timing, pcm)
+        val (layerSources, cueSources) = when (StemConfig.SOURCE) {
+            StemConfig.Source.STEMS ->
+                StemConfig.layers.map { (l, id) -> OggLayerSource(appContext, l, id) } to
+                    StemConfig.cues.map { (c, id) -> OggCueSource(appContext, c, id) }
+            StemConfig.Source.SYNTH -> SynthLayerSource.all() to emptyList()
+        }
+        val (pcm, cuePcm) = LayerCache(appContext.cacheDir).loadAll(layerSources, cueSources, timing)
+        val m = LoopMixer(timing, pcm, cuePcm, LoopMixer.Config(cueMaxMs = StemConfig.CUE_MAX_MS))
         mixer = m
+        Log.i(TAG, "음원=${StemConfig.SOURCE} 레이어=${m.availableLayers} 효과음=${m.availableCues}")
         audio = AudioOutput(m, timing.sampleRate).also { it.start() }
         session = PlaybackSession(appContext, engineHandler, onPlay = { audio?.play() }, onPause = { audio?.pause() })
         val ms = SystemClock.elapsedRealtime() - t0
-        Log.i(TAG, "레이어 합성 완료 ${ms}ms")
+        Log.i(TAG, "레이어 준비 완료 ${ms}ms")
         main.post { listener.onPrepared(ms) }
     }
 
     fun start(newSource: VehicleSignalSource) = engineHandler.post {
         source?.stop()
         engine = DrivingEventEngine()
-        director = MusicDirector(timing)
+        director = MusicDirector(timing, mixer?.availableLayers ?: Layer.entries.toSet())
         recent.clear()
         mixer?.let { m -> Layer.entries.forEach { m.submit(MusicCommand.SetLayer(it, false)) } }
         session?.play()
@@ -113,7 +123,7 @@ class DriveController(context: Context, private val listener: Listener) {
             val list = recent.toList()
             val layers = director.layers
             val a = audio
-            val dbg = "level=${director.level} 렌더부하=${"%.1f".format(a?.renderLoadPercent ?: 0f)}% underrun=${a?.underruns ?: 0}"
+            val dbg = "stage=${director.stage} 렌더부하=${"%.1f".format(a?.renderLoadPercent ?: 0f)}% underrun=${a?.underruns ?: 0}"
             if (now - lastDbgLogMs >= 5_000) { lastDbgLogMs = now; Log.i(TAG, "상태 v=${"%.1f".format(state.speedMps * 3.6f)}km/h layers=$layers $dbg") }
             main.post { listener.onUpdate(state, list, layers, dbg) }
         }
@@ -121,7 +131,5 @@ class DriveController(context: Context, private val listener: Listener) {
 
     companion object {
         const val TAG = "PlayDrive.Drive"
-        /** 합성 코드·작곡을 바꾸면 올린다(레이어 캐시 무효화). */
-        const val SYNTH_VERSION = "1"
     }
 }

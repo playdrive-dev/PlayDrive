@@ -18,26 +18,37 @@ data class MusicTiming(
 enum class Quantize { NOW, BEAT, BAR }
 
 /**
- * 레이어. level = 믹스 음량, pan = -1(왼쪽)~1(오른쪽), quantize = 켜고 끄는 시점.
- * 5개 기본 레이어 + 효과 레이어 2개(방향지시등 필인, 빗소리).
+ * 레이어. level = 믹스 음량, pan = -1(왼쪽)~1(오른쪽, 모노 소스에만 적용), quantize = 켜고 끄는 시점.
+ * 스템 6종(PAD=pad_rain, DRUMS, HIHAT=hat, BASS, CHORDS, MELODY) + 신스 전용 효과 레이어 2개.
  */
 enum class Layer(val level: Float, val pan: Float, val quantize: Quantize) {
+    PAD(0.70f, 0f, Quantize.BAR),
     DRUMS(0.95f, 0f, Quantize.BAR),
-    BASS(0.80f, 0f, Quantize.BAR),
-    PAD(0.55f, 0f, Quantize.BAR),
-    MELODY(0.60f, -0.15f, Quantize.BAR),
-    HIHAT(0.45f, 0.25f, Quantize.BAR),
-    HIHAT_FILL(0.50f, 0.35f, Quantize.BEAT),
-    RAIN(0.45f, 0f, Quantize.BAR),
+    HIHAT(0.60f, 0.25f, Quantize.BAR),
+    BASS(0.85f, 0f, Quantize.BAR),
+    CHORDS(0.70f, -0.1f, Quantize.BAR),
+    MELODY(0.65f, -0.15f, Quantize.BAR),
+    HIHAT_FILL(0.50f, 0.35f, Quantize.BEAT), // 신스 전용: 방향지시등 필인
+    RAIN(0.45f, 0f, Quantize.BAR),           // 신스 전용: 빗소리 (스템은 pad_rain에 포함)
+}
+
+/** 급 이벤트에 대한 음악적 반응. 스템 모드 = 효과음 원샷, 신스 모드 = DSP 효과로 대체. */
+enum class Cue { TAPE_STOP, SCRATCH }
+
+/** 스테레오 PCM(Float). 모노 소스는 left와 right가 같은 배열. */
+class StereoPcm(val left: FloatArray, val right: FloatArray) {
+    val frames: Int get() = left.size
+    val isMono: Boolean get() = left === right
+    companion object { fun mono(x: FloatArray) = StereoPcm(x, x) }
 }
 
 sealed interface MusicCommand {
     data class SetLayer(val layer: Layer, val on: Boolean) : MusicCommand
-    /** 급제동: 테이프가 멈추듯 피치·속도가 떨어진 뒤 다음 마디에 다시 들어온다. */
+    /** 급제동·급가속 = TAPE_STOP, 급조향(급차선변경) = SCRATCH. 즉시 반응 + 음악 덕킹. */
+    data class PlayCue(val cue: Cue) : MusicCommand
+    /** DSP 효과(신스 모드 대체·디버그용). */
     data object TapeStop : MusicCommand
-    /** 급가속: 로우패스로 소리가 먹먹해졌다가 2마디에 걸쳐 회복. */
     data object LowpassDip : MusicCommand
-    /** 급조향: 멜로디 피치가 1마디 동안 흔들린다. */
     data object PitchWobble : MusicCommand
     data class MasterGain(val gain: Float) : MusicCommand
 }
