@@ -48,3 +48,69 @@
   - TurnSignal: `checkTurnSignalStateCapabilities(onComplete:(CapabilityConfig)->Unit, onFailed:(Exception)->Unit)`, `getCurrentTurnSignalState(onComplete:(TurnSignalValue)->Unit, onFailed)`, `registerTurnSignalState(TurnSignalStateListener)` / `unregisterTurnSignalState(같은 리스너)`.
   - Pleos Vehicle SDK 안에도 `Gear` API가 있음 → 기어 신호를 CarPropertyManager로 받을지 비교 검토(3단계).
 - 익명성 점검: 커밋할 텍스트 파일에서 사용자명·개인 이메일·실명이 나오지 않는 것을 확인함. 다만 지원서 docx의 문서 속성(마지막 수정자)에 실명·소속으로 보이는 값이 있음 → `docs/*.docx`를 .gitignore에 추가해 저장소에서 뺌. 이메일로 제출하기 전에 Word에서 문서 속성을 정리할 것(파일 > 정보 > 문제 확인 > 문서 검사).
+- 첫 커밋 `636f110`(브랜치 main, 작성자 playdrive-dev, 익명 noreply). 아직 push 안 함. 다음 단계: 에뮬레이터가 준비되면 3단계(방향지시등 Capability·현재값 호출).
+
+## 2026-11-10 — 3단계 시도: 에뮬레이터 연결 (막힘)
+
+- `adb devices`: 연결된 기기 없음. 실행 중인 에뮬레이터(qemu) 프로세스도 없음.
+- `~/.android/avd`가 비어 있음(AVD 0개). `system-images`에도 Pleos Connect API 34 이미지가 없음(android-36/google_apis 빈 폴더만 있음).
+- → 이 Mac에서는 Pleos 시스템 이미지 설치와 AVD 생성이 아직 끝나지 않은 것으로 보임. 차량 서비스 버전 확인, Virtual Console, 3단계는 진행하지 못함.
+
+## 2026-11-10 — Pleos 에뮬레이터 터미널 설치
+
+- 시스템 이미지 목록 XML(arm64): `https://nexus-playground.pleos.ai/repository/raw-releases/connect-avd/2.x/crp-arm64-sys-img.xml`
+  - 패키지 경로 `system-images;android-34;pleos_car_emulator;arm64-v8a`, tag `android-automotive`("Pleos Connect v2.1.0 APIs"), vendor `pleos`, revision 2, emulator 24 이상 필요.
+  - 아카이브: `.../connect-avd/2.x/crp_car_arm64_emulator.zip`, 4,669,762,816 B(4.67GB), sha1 `24d28eb2f18eba5e87c861a7eb2bdccebb049419`.
+  - 라이선스: 42dot Pleos Connect SDK License(CRP 호환 앱 개발 용도로 한정, 재배포·역공학 금지).
+- 설치 방식: sdkmanager CLI는 Studio의 SDK Update Site를 읽지 않음 → zip을 직접 받아 SDK 경로에 풀기로 함. 다운로드 속도 약 5MB/s(약 15분).
+- 다운로드 완료(약 13분), sha1 일치. 압축을 풀면 약 20GB(system.img 18.3GB, userdata 1.15GB, vendor 0.54GB). 디스크 여유가 51GB → 27GB로 줄어듦.
+- zip 안 폴더 `crp_avd_out_arm64-v8a`를 `~/Library/Android/sdk/system-images/android-34/pleos_car_emulator/arm64-v8a`로 옮김. zip에 든 source.properties: TagId=android-automotive, VendorId=42dot, ApiLevel 34, 권장 RAM 8192.
+- 막힌 점과 해결: zip에는 package.xml이 없어서 avdmanager가 이 경로를 `android-automotive`로 잘못 인식하고 AVD 생성을 거부함 → 원격 XML의 remotePackage 정보로 package.xml을 직접 만들어 넣으니 해결됨(Studio가 설치할 때 만드는 것과 같은 정보).
+- AVD `Pleos_Connect_v2.1.0_API34`: 기기 automotive_1024p_landscape(1024x768), RAM 4096MB, `fastboot.forceColdBoot=yes`, GPU host.
+- 실행 명령: `emulator -avd Pleos_Connect_v2.1.0_API34 -no-snapshot-load`
+
+## 2026-11-10 — 에뮬레이터 부팅 · 3단계: 방향지시등 API 확인 ✅
+
+### 에뮬레이터
+- 첫 실행(`-gpu host`, 기본값): 부팅 직후 "detected a hanging thread 'QEMU2 main loop'" 오류가 나고 **exit 139로 비정상 종료**.
+- 다시 실행(`-gpu swiftshader_indirect`): 정상 부팅(cold boot 약 7.5분)했고 60초 이상 안정적이었음. **이 Mac(M2, RAM 16GB)에서는 소프트웨어 GPU로 실행한다.**
+  `emulator -avd Pleos_Connect_v2.1.0_API34 -no-snapshot-load -gpu swiftshader_indirect`
+- 소프트웨어 GPU로 실행하면 시스템 앱 DrivingView(Unreal, `ai.umos.drivingview`)가 SIGSEGV로 반복해서 죽음. 우리 앱과는 무관함.
+- 빌드: `Pleos/crp_avd_arm64/crp_avd_arm64:14/RELEASE.release_connect_v2.1.0/...:user/test-keys`
+- **차량 서비스 `ai.pleos.playground.service.vehicle` 2.3.22 (versionCode 74)** → SDK 요구치 2.3.13(65)을 충족함.
+
+### Virtual Console (`adb forward tcp:8088 tcp:8088` → http://127.0.0.1:8088/)
+- 접속됨(HTTP 200, 제목 "Pleos Connect Virtual Console"). 기능 목록: `GET /vehicle/catalog`, 현재 상태: `GET /vehicle/state`.
+- **브라우저 세션 heartbeat가 필요함**: 쓰기 요청은 `POST /browser/session?client=<id>`를 1초마다 보내고 있어야 동작함. 안 보내면 `{"error":"emulator_inactive"}`. 쓰기는 `PUT`.
+- 우리에게 필요한 항목은 모두 있음:
+
+| 항목 | Console 기능 / 쓰기 API | 값 | CarProperty |
+|---|---|---|---|
+| 방향지시등 | `PUT /vehicle/turn-signal?mode=` | Off, BlinkLeft, BlinkRight, FlashLeft, FlashRight | TURN_SIGNAL_STATE 0x11400408 |
+| 차량 속도 | `PUT /vehicle/controls?speed=` (별도 카드 없음, Motion 페달 영역) | 0~240 km/h | (DDS topic …DRIVINGINFO_ACTUAL_SPEED) |
+| 브레이크 | `PUT /vehicle/controls?brake=` | 0~100 % | BRAKE_PEDAL_STATUS(vendor) 0x21200409 |
+| 조향각 | `/vehicle/controls?steering=` | -540~540° | PERF_STEERING_ANGLE |
+| 와이퍼 | `PUT /vehicle/body?front_wiper=` | Off, Auto, Low, High | WINDSHIELD_WIPERS_SWITCH 0x13400BC7 |
+| 좌석 착좌 | `PUT /vehicle/seat?kind=occupied&area=driver&value=` | true/false, area: driver, passenger, rear_left, rear_right | SEAT_OCCUPANCY 0x15400BB0 |
+| 기어 | `PUT /vehicle/gear?gear=` | Park, Reverse, Neutral, Drive | VENDOR_GEAR_SELECTION 0x21400400 |
+- 그 밖에 정속주행·주행거리·주행시간·비상등·제동등 등이 있음. 속도/브레이크/조향은 `controls.dds_ready`가 false로 나오는데, 실제로 반영되는지는 6단계에서 확인할 것.
+
+### 3단계 결과: 방향지시등 (TurnSignal)
+- 권한 `pleos.car.permission.CAR_LIGHTS`: 정의한 곳은 `ai.pleos.playground.service.vehicle`, **protectionLevel=normal** → 설치하면 자동으로 허용됨(런타임 요청 불필요). SDK 메서드에도 `@RequiresPermission("pleos.car.permission.CAR_LIGHTS")`가 붙어 있음.
+- 실제 API(Vehicle SDK 2.3.2):
+  - `vehicle.getTurnSignal().checkTurnSignalStateCapabilities({ config: CapabilityConfig -> }, { e: Exception -> })` → `CapabilityConfig(accessType=READ)`
+  - `getCurrentTurnSignalState({ value: TurnSignalValue? -> }, { e -> })` → `OFF`
+  - `registerTurnSignalState(listener: TurnSignalStateListener)` → 등록 직후 현재값(OFF)이 한 번 들어옴. 그 뒤로는 변경될 때마다 호출됨.
+  - `TurnSignalStateListener`는 fun interface가 **아님**: `onTurnSignalStateUpdated(value: TurnSignalValue?)`와 `onFailed(e: Exception)`(VehicleListener 상속) 두 메서드를 구현해야 함 → `object :`로 구현.
+  - `TurnSignalValue` enum: `OFF(id=0)`, `RIGHT(id=1)`, `LEFT(id=2)`. Console의 BlinkLeft→LEFT, BlinkRight→RIGHT, Off→OFF로 확인함. Flash* 매핑은 아직 확인 안 함.
+  - 콜백은 **메인이 아닌 SDK 바인더 스레드**에서 호출됨 → UI 갱신은 runOnUiThread/Flow로 메인에 넘겨야 함.
+- 실행 로그(발췌):
+  ```
+  Vehicle.initialize() 완료
+  Capability: accessType=READ (CapabilityConfig(accessType=READ))
+  리스너 등록 완료
+  현재값: OFF (id=0)
+  변경 이벤트: LEFT (id=2)     ← Console BlinkLeft
+  변경 이벤트: OFF (id=0)      ← Console Off
+  ```
+- 앱 콜드 스타트(am start -W TotalTime): 2.2~3.6초(소프트웨어 GPU 에뮬레이터 기준).
