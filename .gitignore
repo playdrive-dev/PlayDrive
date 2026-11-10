@@ -1,0 +1,29 @@
+# Secrets / local config (Pleos 키는 local.properties에만)
+local.properties
+*.keystore
+*.jks
+keystore.properties
+.env
+
+# IDE
+.idea/
+*.iml
+.vscode/
+
+# Build
+build/
+.gradle/
+.kotlin/
+.cxx/
+.externalNativeBuild/
+captures/
+*.apk
+!apk/*_release.apk
+*.aab
+output-metadata.json
+
+# OS
+.DS_Store
+
+# 지원서(이메일 제출용, 개인정보·메타데이터 포함 가능) — 익명 저장소에 올리지 않음
+docs/*.docx
