@@ -190,3 +190,28 @@
   4. 차량 볼륨: `adb shell dumpsys car_service | grep "Gain indexes"`. 에뮬레이터 화면의 볼륨 슬라이더로도 조절 가능.
   5. 들리지 않으면 Mac 시스템 출력의 음소거·볼륨부터 확인할 것(이번 확인 때 Mac 출력이 음소거 상태였음).
 - 디버그 자동화(디버그 빌드 전용): `adb shell am start -n app.playdrive/.MainActivity --es debug demo|real|stop|layers:PAD,BASS,...|fx:TapeStop|LowpassDip|PitchWobble`
+
+## 2026-11-10 — 시연 준비: 데모 드라이브 ✅
+
+- `sim/DemoDriveScenario`(순수 Kotlin 타임라인) + `sim/DemoDriveSource`(10Hz 재생, `VehicleSignalSource` 구현 → 실제 신호원과 교체 가능).
+- 시나리오(60초): P단·혼자 탑승 → 3s D단 → 5~15s 0→60km/h 부드러운 가속 → 15~30s 정속 → 21~25s 왼쪽 방향지시등 + 완만한 조향(차선 변경) → 30s 급제동 60→35km/h(약 4.6 m/s²) → 32.5~38.5s 부드러운 재가속 → 35s 비(와이퍼) → 46~52s 부드러운 감속, 정차 → 55s 비 그침 → 56s P단.
+- 통합 테스트 `DemoDriveScenarioTest`(2개): 시나리오 → 엔진 → 연출을 거쳐 이벤트 순서와 시점별 레이어를 검증. **전체 단위 테스트 26/26 통과.**
+- 에뮬레이터 실행 결과(`--es debug demo`), 시각은 데모 시작 기준:
+
+| 시각 | 운전 이벤트 | 음악 |
+|---|---|---|
+| 0s | Parked, 혼자 탑승 | 인트로: PAD |
+| 5.8s | Departed, SmoothAcceleration | + DRUMS, BASS |
+| 11.1s / 16.4s | (급 이벤트 없이 2마디씩) | + HIHAT / + MELODY |
+| 20.7s | CruiseStarted | — |
+| 21.0s | TurnSignalOn | + HIHAT_FILL(다음 박) |
+| 25.0s | LaneChange | − HIHAT_FILL |
+| 30.5s | HarshBraking | **TapeStop**, − MELODY, − HIHAT |
+| 34.1~35.0s | SmoothAcceleration, RainStarted | + RAIN |
+| 35.8s / 41.3s | (회복) | + HIHAT / + MELODY |
+| 47.3s / 53.0s | SmoothDeceleration / Stopped | 브레이크다운: − DRUMS, − HIHAT |
+| 55.1s / 56.0s | RainStopped / Parked | − RAIN / 아웃트로: PAD만 |
+
+- 반응: 신호 처리 → 음악 명령까지 같은 ms 안(로그 기준). 실제 소리 변화는 설계대로 다음 마디(최대 2.67초)나 다음 박(최대 0.67초)에서. 테이프 스톱은 다음 20ms 렌더 블록부터 바로 시작.
+- 부하(소프트웨어 GPU 에뮬레이터 기준): 오디오 렌더링 = 실시간 대비 **2.5~12%**(한 코어 기준). 앱 프로세스 CPU(top, 5초 간격) 1~24% — 디버그 화면을 250ms마다 갱신하고 로그를 남기는 비용이 포함됨. 실차 기준 측정과 주행 화면(텍스트 갱신 없음)에서 다시 잴 것.
+- AudioTrack underrunCount: 시작 직후 3~6회, 이후 늘지 않음.
