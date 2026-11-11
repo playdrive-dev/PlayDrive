@@ -12,7 +12,7 @@ import android.graphics.Shader
 import android.os.SystemClock
 import android.view.View
 import android.view.animation.LinearInterpolator
-import app.playdrive.album.AlbumNaming
+import app.playdrive.album.CoverSpec
 import app.playdrive.album.BreathCoach
 import app.playdrive.album.MoodState
 import kotlin.math.PI
@@ -36,6 +36,11 @@ class MoodView(context: Context) : View(context) {
     private val wavePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeWidth = 3f }
     private val path = Path()
 
+    fun setCover(c: CoverSpec?, immediate: Boolean = false) {
+        scene.setCover(c, now(), immediate)
+        if (!scene.restricted) invalidate()
+    }
+
     fun show(s: MoodState, immediate: Boolean = false) {
         scene.show(s, now(), immediate)
         if (!scene.restricted) invalidate()
@@ -45,17 +50,24 @@ class MoodView(context: Context) : View(context) {
         val f = scene.frame(now())
         c.drawColor(f.background)
         val w = width.toFloat(); val h = height.toFloat()
+        // 오늘의 커버: 무드 원과 같은 중심에 화면 높이만 한 정사각형으로 은은하게(가장자리는 배경색으로 스며들게)
+        f.cover?.let { cv ->
+            val side = min(w, h) * 1.08f
+            CoverPainter.draw(c, cv, (w - side) / 2, h * 0.46f - side / 2, side, f.coverAlpha, f.revealFrom, f.reveal, f.background)
+        }
         val cx = w / 2; val cy = h * 0.46f
         val unit = min(w, h)
+        val ma = f.moodAlpha
         // 겹친 원 3개: 레이어가 많을수록(에너지) 크고 넓게. 가장자리는 투명으로 번진다.
         for ((rr, col) in f.circles) {
             val r = rr * unit
-            paint.shader = RadialGradient(cx, cy, r, col, Color.TRANSPARENT, Shader.TileMode.CLAMP)
+            val a = (Color.alpha(col) * ma).toInt()
+            paint.shader = RadialGradient(cx, cy, r, (a shl 24) or (col and 0xFFFFFF), Color.TRANSPARENT, Shader.TileMode.CLAMP)
             c.drawCircle(cx, cy, r, paint)
         }
         paint.shader = null
         // 물결: 부드러울수록 잔잔
-        wavePaint.color = f.waveColor
+        wavePaint.color = ((Color.alpha(f.waveColor) * ma).toInt() shl 24) or (f.waveColor and 0xFFFFFF)
         val amp = h * f.waveAmp
         for (k in 0 until 2) {
             path.reset()
@@ -163,30 +175,98 @@ class BreathView(context: Context, private val onPhase: (inhale: Boolean) -> Uni
     }
 }
 
-/** 앨범 커버: AlbumNaming.CoverSpec을 그린다. */
+/** 앨범 커버(격자·상세·호흡 화면). */
 class CoverView(context: Context) : View(context) {
-    var spec: AlbumNaming.CoverSpec? = null
+    var spec: CoverSpec? = null
         set(v) { field = v; invalidate() }
-    private val p = Paint(Paint.ANTI_ALIAS_FLAG)
     override fun onDraw(c: Canvas) {
         val s = spec ?: return
-        val w = width.toFloat(); val h = height.toFloat()
-        c.drawColor(s.background)
-        p.shader = RadialGradient(w * 0.5f, h * 0.5f, w * 0.7f, s.glow, 0x00000000, Shader.TileMode.CLAMP)
-        c.drawRect(0f, 0f, w, h, p); p.shader = null
-        for ((x, y, r) in s.circles) {
-            p.color = (s.circleColor and 0x00FFFFFF) or 0x88000000.toInt()
-            c.drawCircle(x * w, y * h, r * w, p)
+        val side = maxOf(width, height).toFloat()
+        CoverPainter.draw(c, s, (width - side) / 2, (height - side) / 2, side, 1f, s.layers.size, 1f, null)
+    }
+}
+
+/**
+ * 커버 그리기(무드 배경·앨범 공용).
+ * 겹마다: 둥근 원(부드러운 구간) + 빗줄기(비 온 구간) + 물결이 흐트러진 자국(깨진 순간).
+ * revealFrom 이후 겹은 reveal(0~1)만큼만 그린다: 원이 자라고, 빗줄기가 내려오고, 자국이 번진다. 새 겹 둘레엔 잠깐 빛 고리.
+ * fadeTo != null 이면 가장자리를 그 색으로 스며들게(무드 배경용).
+ */
+object CoverPainter {
+    private val p = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val path = Path()
+
+    private fun a(color: Int, alpha: Float) = ((Color.alpha(color) * alpha).toInt().coerceIn(0, 255) shl 24) or (color and 0xFFFFFF)
+    private fun easeOut(k: Float) = 1f - (1f - k) * (1f - k) * (1f - k)
+
+    fun draw(c: Canvas, s: CoverSpec, x0: Float, y0: Float, side: Float, alpha: Float, revealFrom: Int, reveal: Float, fadeTo: Int?) {
+        fun X(v: Float) = x0 + v * side
+        fun Y(v: Float) = y0 + v * side
+        p.style = Paint.Style.FILL; p.shader = null
+        if (fadeTo == null) {
+            p.color = a(s.background or 0xFF000000.toInt(), alpha)
+            c.drawRect(x0, y0, x0 + side, y0 + side, p)
+        } else { // 무드 배경: 네모 테두리 없이 둥글게 번지는 바탕색
+            p.shader = RadialGradient(X(0.5f), Y(0.5f), side * 0.5f, intArrayOf(a(s.background or 0xFF000000.toInt(), alpha * 0.4f), a(s.background or 0xFF000000.toInt(), alpha * 0.25f), 0), floatArrayOf(0f, 0.6f, 1f), Shader.TileMode.CLAMP)
+            c.drawRect(x0, y0, x0 + side, y0 + side, p); p.shader = null
         }
-        p.style = Paint.Style.STROKE; p.strokeWidth = w * 0.01f; p.color = 0x66FFFFFF
-        val path = Path(); path.moveTo(0f, h * 0.8f)
-        var x = 0f
-        while (x <= w) { path.lineTo(x, h * 0.8f + h * 0.05f * s.wave * sin(2 * PI * x / w * 3).toFloat()); x += w / 40 }
-        c.drawPath(path, p)
-        // 비: 밝은 배경에선 진한 남색, 어두운 배경에선 옅은 하늘색
+        p.shader = RadialGradient(X(0.5f), Y(0.5f), side * 0.7f, a(s.glow, alpha), 0x00000000, Shader.TileMode.CLAMP)
+        c.drawRect(x0, y0, x0 + side, y0 + side, p); p.shader = null
         val lum = (Color.red(s.background) * 0.299 + Color.green(s.background) * 0.587 + Color.blue(s.background) * 0.114) / 255
-        p.color = if (lum > 0.5) 0x993A5A7A.toInt() else 0x66BFD9FF
-        for (i in 0 until s.rainLines) { val xx = w * ((i * 37) % 100) / 100f; val yy = h * ((i * 53) % 100) / 100f; c.drawLine(xx, yy, xx - w * 0.03f, yy + h * 0.08f, p) }
+        val rainColor = if (lum > 0.5) 0x993A5A7A.toInt() else 0x88BFD9FF.toInt()
+        // 바탕 물결(잔잔/출렁임)
+        p.style = Paint.Style.STROKE; p.strokeWidth = side * 0.008f; p.strokeCap = Paint.Cap.ROUND
+        p.color = a(0x66FFFFFF, alpha)
+        path.reset(); path.moveTo(X(0f), Y(0.8f))
+        var xx = 0f
+        while (xx <= 1f) { path.lineTo(X(xx), Y(0.8f + 0.05f * s.wave * sin(2 * PI * xx * 3).toFloat())); xx += 1f / 48 }
+        c.drawPath(path, p)
+        s.layers.forEachIndexed { i, l ->
+            val k = if (i < revealFrom) 1f else reveal
+            if (k <= 0f) return@forEachIndexed
+            val grow = easeOut(k)
+            // 둥근 원
+            p.style = Paint.Style.FILL
+            p.color = a((l.color and 0xFFFFFF) or 0x88000000.toInt(), alpha * k)
+            c.drawCircle(X(l.x), Y(l.y), l.r * side * grow, p)
+            if (i >= revealFrom && k < 1f) { // 새 겹 둘레 빛 고리
+                p.style = Paint.Style.STROKE; p.strokeWidth = side * 0.006f
+                p.color = a(0xCCFFFFFF.toInt(), alpha * (1f - k))
+                c.drawCircle(X(l.x), Y(l.y), l.r * side * (1f + 0.35f * k), p)
+            }
+            // 빗줄기: 원 둘레에서 위→아래로 내려온다
+            if (l.rain > 0) {
+                p.style = Paint.Style.STROKE; p.strokeWidth = side * 0.005f
+                p.color = a(rainColor, alpha * k)
+                val rnd = java.util.Random(l.seed.toLong())
+                repeat(l.rain) {
+                    val rx = l.x + (rnd.nextFloat() - 0.5f) * 0.5f
+                    val ry = l.y + (rnd.nextFloat() - 0.6f) * 0.5f
+                    val len = 0.07f * grow
+                    c.drawLine(X(rx), Y(ry), X(rx - 0.025f * grow), Y(ry + len), p)
+                }
+            }
+            // 깨진 순간: 물결이 흐트러진 자국(바탕 물결 위 들쭉날쭉한 짧은 선)
+            if (l.scars > 0) {
+                p.style = Paint.Style.STROKE; p.strokeWidth = side * 0.01f
+                p.color = a(0xCCF2E6D8.toInt(), alpha * k)
+                val rnd = java.util.Random(l.seed.toLong() * 7 + 1)
+                repeat(l.scars) { n ->
+                    val cxs = (l.x + (rnd.nextFloat() - 0.5f) * 0.3f).coerceIn(0.12f, 0.88f)
+                    val cy = 0.8f + (n - 1) * 0.035f
+                    val half = 0.09f * grow
+                    path.reset(); path.moveTo(X(cxs - half), Y(cy))
+                    var q = -half; var up = true
+                    while (q <= half) { path.lineTo(X(cxs + q), Y(cy + (if (up) -1 else 1) * 0.03f * (1f - kotlin.math.abs(q) / (half + 1e-4f)))); up = !up; q += 0.018f }
+                    c.drawPath(path, p)
+                }
+            }
+        }
         p.style = Paint.Style.FILL
+        // 무드 배경: 가장자리를 배경색으로 스며들게
+        if (fadeTo != null) {
+            p.shader = RadialGradient(X(0.5f), Y(0.5f), side * 0.7f, intArrayOf(fadeTo and 0x00FFFFFF, fadeTo and 0x00FFFFFF, fadeTo or 0xFF000000.toInt()), floatArrayOf(0f, 0.45f, 0.71f), Shader.TileMode.CLAMP)
+            c.drawRect(x0, y0, x0 + side, y0 + side, p); p.shader = null
+        }
     }
 }

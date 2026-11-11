@@ -35,7 +35,7 @@ class AlbumTest {
         val rain = calm.copy(rained = true)
         val morning = calm.copy(startEpochMs = epoch(2026, 11, 10, 8))
         val c = AlbumNaming.cover(calm, kst)
-        assertTrue(c.circleColor != AlbumNaming.cover(busy, kst).circleColor)
+        assertTrue(c.layers[0].color != AlbumNaming.cover(busy, kst).layers[0].color)
         assertTrue(AlbumNaming.cover(busy, kst).wave > c.wave)
         assertEquals(0, c.rainLines); assertTrue(AlbumNaming.cover(rain, kst).rainLines > 0)
         assertTrue(c.background != AlbumNaming.cover(morning, kst).background)

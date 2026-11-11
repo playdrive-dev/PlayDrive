@@ -30,10 +30,21 @@ class AlbumStore(private val file: File) {
         put("id", id); put("title", title); put("reflection", reflection)
         put("start", summary.startEpochMs); put("end", summary.endEpochMs)
         put("smooth", summary.smoothness.toDouble()); put("rain", summary.rained); put("moving", summary.movingSeconds)
+        put("layers", JSONArray().apply {
+            layers.forEach { l -> put(JSONObject().apply {
+                put("x", l.x.toDouble()); put("y", l.y.toDouble()); put("r", l.r.toDouble())
+                put("c", l.color); put("rain", l.rain); put("scars", l.scars); put("seed", l.seed)
+            }) }
+        })
     }
 
     private fun JSONObject.toAlbum() = Album(
         id = getLong("id"), title = getString("title"), reflection = optString("reflection", ""),
         summary = DriveSummary(getLong("start"), getLong("end"), getDouble("smooth").toFloat(), getBoolean("rain"), optInt("moving", 0)),
+        layers = optJSONArray("layers")?.let { arr ->
+            (0 until arr.length()).map { k -> arr.getJSONObject(k).run {
+                CoverLayer(getDouble("x").toFloat(), getDouble("y").toFloat(), getDouble("r").toFloat(), getInt("c"), getInt("rain"), getInt("scars"), getInt("seed"))
+            } }
+        } ?: emptyList(),
     )
 }

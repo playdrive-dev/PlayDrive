@@ -23,6 +23,8 @@ data class Album(
     val summary: DriveSummary,
     val title: String,
     val reflection: String = "",
+    /** 주행하며 그린 커버의 겹(CoverSketch). 비어 있으면 요약으로 커버를 만든다(이전 앨범). */
+    val layers: List<CoverLayer> = emptyList(),
 )
 
 /**
@@ -139,34 +141,22 @@ object AlbumNaming {
         return "${c.get(Calendar.MONTH) + 1}월 ${c.get(Calendar.DAY_OF_MONTH)}일 ${days[c.get(Calendar.DAY_OF_WEEK) - 1]}$sep$ampm $h12:${"%02d".format(c.get(Calendar.MINUTE))}"
     }
 
-    /** 커버 그래픽 사양(색은 0xAARRGGBB). */
-    data class CoverSpec(
-        val background: Int,
-        val glow: Int,
-        val circles: List<Triple<Float, Float, Float>>, // (x, y, r) 0~1
-        val circleColor: Int,
-        val rainLines: Int,
-        val wave: Float, // 0 = 잔잔, 1 = 출렁임
-    )
+    /** 앨범 커버: 주행 중 그린 겹이 있으면 그것, 없으면 요약으로 만든 커버. */
+    fun cover(a: Album, tz: TimeZone = TimeZone.getDefault()): CoverSpec =
+        if (a.layers.isNotEmpty()) CoverArt.spec(a.summary.startEpochMs, a.layers, tz) else cover(a.summary, tz)
 
+    /** 요약만 있을 때의 커버(겹 기록 이전 앨범·예시 앨범): 부드러움·비·시간대로. */
     fun cover(s: DriveSummary, tz: TimeZone = TimeZone.getDefault()): CoverSpec {
-        val c = Calendar.getInstance(tz).apply { timeInMillis = s.startEpochMs }
-        val part = partOfDay(c.get(Calendar.HOUR_OF_DAY))
-        val bg = when (part) {
-            PartOfDay.DAWN -> 0xFF1B2440.toInt()
-            PartOfDay.MORNING -> 0xFFF2D7B6.toInt()
-            PartOfDay.DAY -> 0xFFBFD9E8.toInt()
-            PartOfDay.EVENING -> 0xFF5A3F63.toInt()
-            PartOfDay.NIGHT -> 0xFF101826.toInt()
-        }
         val calm = (s.smoothness / 100f).coerceIn(0f, 1f)
-        // 부드러울수록 차분한 청록, 분주할수록 따뜻한 주황
-        val circleColor = lerpColor(0xFFE59A5C.toInt(), 0xFF6CC3B5.toInt(), calm)
-        val glow = lerpColor(0x55E59A5C, 0x556CC3B5, calm)
         val rnd = Random(s.startEpochMs)
         val n = 3 + (calm * 3).toInt()
-        val circles = List(n) { Triple(0.2f + rnd.nextFloat() * 0.6f, 0.2f + rnd.nextFloat() * 0.6f, 0.08f + rnd.nextFloat() * (0.12f + 0.12f * calm)) }
-        return CoverSpec(bg, glow, circles, circleColor, if (s.rained) 24 else 0, 1f - calm)
+        val rainEach = if (s.rained) 24 / n + 1 else 0
+        val layers = List(n) {
+            CoverLayer(0.2f + rnd.nextFloat() * 0.6f, 0.2f + rnd.nextFloat() * 0.6f, 0.08f + rnd.nextFloat() * (0.12f + 0.12f * calm),
+                CoverArt.circleColor(calm), rainEach, 0, rnd.nextInt())
+        }
+        val glow = lerpColor(0x55E59A5C, 0x556CC3B5, calm)
+        return CoverSpec(s.startEpochMs, CoverArt.background(s.startEpochMs, tz), glow, layers, 1f - calm)
     }
 
     fun lerpColor(a: Int, b: Int, t: Float): Int {

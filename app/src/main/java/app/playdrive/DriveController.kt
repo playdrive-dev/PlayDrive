@@ -10,6 +10,8 @@ import app.playdrive.album.Album
 import app.playdrive.album.AlbumNaming
 import app.playdrive.album.AlbumStore
 import app.playdrive.album.BreathCoach
+import app.playdrive.album.CoverSketch
+import app.playdrive.album.CoverSpec
 import app.playdrive.album.DriveRecorder
 import app.playdrive.audio.AudioOutput
 import app.playdrive.audio.PlaybackSession
@@ -44,6 +46,8 @@ class DriveController(context: Context, private val listener: Listener) {
         fun onPlayingChanged(playing: Boolean) {}
         /** 주행 한 번이 끝남(출발 후 P단): 새 앨범과 '주차 후 1분' 제안 여부. */
         fun onDriveFinished(album: Album, suggestBreath: Boolean) {}
+        /** 오늘의 커버가 바뀜(새 주행 시작 또는 정차로 한 겹 추가). 화면 반영은 UI가 정차 때만. */
+        fun onCover(cover: CoverSpec) {}
     }
 
     private val appContext = context.applicationContext
@@ -62,6 +66,7 @@ class DriveController(context: Context, private val listener: Listener) {
     private var lastUiMs = 0L
     private var lastDbgLogMs = 0L
     private val recorder = DriveRecorder { System.currentTimeMillis() }
+    private var sketch = CoverSketch { System.currentTimeMillis() }
     val albums = AlbumStore(java.io.File(appContext.filesDir, "albums.json"))
     @Volatile var playing = false; private set
     val totalLayers: Int get() = mixer?.availableLayers?.size ?: Layer.entries.size
@@ -88,6 +93,7 @@ class DriveController(context: Context, private val listener: Listener) {
     fun start(newSource: VehicleSignalSource) = engineHandler.post {
         source?.stop()
         engine = DrivingEventEngine()
+        sketch = CoverSketch { System.currentTimeMillis() }
         director = MusicDirector(timing, mixer?.availableLayers ?: Layer.entries.toSet(), StemConfig.arrangement)
         recent.clear()
         mixer?.let { m -> Layer.entries.forEach { m.submit(MusicCommand.SetLayer(it, false)) } }
@@ -132,8 +138,10 @@ class DriveController(context: Context, private val listener: Listener) {
     private fun process(sample: SignalSample) {
         val events = engine.onSample(sample)
         val cmds = director.update(engine.state, events)
+        val newCover = if (sketch.update(engine.state, events)) sketch.spec() else null
         recorder.update(engine.state, events)?.let { summary ->
-            val album = Album(summary.startEpochMs, summary, AlbumNaming.uniqueTitle(summary, albums.all().map { it.summary }))
+            // 주행하며 그린 커버가 그대로 새 앨범의 커버가 된다
+            val album = Album(summary.startEpochMs, summary, AlbumNaming.uniqueTitle(summary, albums.all().map { it.summary }), layers = sketch.layers)
             albums.add(album)
             val suggest = BreathCoach.shouldSuggest(engine.state, justFinishedDrive = true)
             Log.i(TAG, "주행 끝 → 앨범 '${album.title}', 주차 후 1분 제안=$suggest")
@@ -156,6 +164,11 @@ class DriveController(context: Context, private val listener: Listener) {
             val dbg = "stage=${director.stage} 렌더부하=${"%.1f".format(a?.renderLoadPercent ?: 0f)}% underrun=${a?.underruns ?: 0}"
             if (now - lastDbgLogMs >= 5_000) { lastDbgLogMs = now; Log.i(TAG, "상태 v=${"%.1f".format(state.speedMps * 3.6f)}km/h layers=$layers $dbg") }
             main.post { listener.onUpdate(state, list, layers, dbg) }
+        }
+        // 커버는 상태(주행 중 여부) 다음에 넘긴다 → 출발 순간의 새 커버가 화면에 새지 않고 보관된다
+        newCover?.let { c ->
+            Log.i(TAG, "커버 겹 ${c.layers.size} (비 ${c.rainLines}, 깨진 자국 ${c.scars})")
+            main.post { listener.onCover(c) }
         }
     }
 

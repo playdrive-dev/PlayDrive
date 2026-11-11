@@ -58,4 +58,41 @@ class MoodSceneTest {
         assertEquals(busy, sc.mood(50_000))
         assertEquals(sc.frame(1_000), sc.frame(50_000))
     }
+
+    private fun cover(n: Int) = app.playdrive.album.CoverArt.spec(7L, List(n) { app.playdrive.album.CoverArt.layer(it, 7L, 0.8f, 30f, if (it == 1) 0.5f else 0f, it % 2) })
+
+    @Test fun `주행 중 새 겹은 화면에 안 나오고, 정차 순간 한 겹 추가되는 장면 4초`() {
+        val sc = MoodScene(startMs = 0, initial = calm)
+        sc.setCover(cover(1), 0, immediate = true)
+        sc.setRestricted(true, 1_000)
+        val frozen = sc.frame(1_000)
+        sc.setCover(cover(2), 20_000)                        // 주행 중 한 겹 더 그려짐
+        assertEquals(frozen, sc.frame(25_000))               // 화면은 그대로
+        assertEquals(1, sc.frame(25_000).cover!!.layers.size)
+        sc.setRestricted(false, 30_000)                      // 정차
+        val f0 = sc.frame(30_000)
+        assertEquals(2, f0.cover!!.layers.size)
+        assertEquals(1, f0.revealFrom)                        // 두 번째 겹만 새로
+        assertEquals(0f, f0.reveal, 1e-6f)
+        val mid = sc.frame(31_600)
+        assertTrue(mid.reveal > 0.3f && mid.reveal < 0.8f)
+        assertTrue(mid.coverAlpha > 0.5f)                     // 장면 동안 커버가 또렷
+        assertTrue(mid.moodAlpha < 0.5f)                      // 무드 원은 옅게
+        val end = sc.frame(34_100)
+        assertEquals(1f, end.reveal, 1e-6f)
+        assertEquals(MoodScene.COVER_ALPHA, end.coverAlpha, 1e-6f)  // 다시 은은하게
+        assertEquals(1f, end.moodAlpha, 1e-6f)
+    }
+
+    @Test fun `장면 도중 다시 출발하면 그 자리에서 멈췄다가 다음 정차에 이어서`() {
+        val sc = MoodScene(startMs = 0, initial = calm)
+        sc.setCover(cover(1), 0, immediate = true)
+        sc.setCover(cover(2), 1_000)
+        sc.setRestricted(true, 2_000)                         // 장면 1초째에 출발
+        val f = sc.frame(2_000)
+        repeat(100) { k -> assertEquals(f, sc.frame(2_000L + k * 997)) }
+        sc.setRestricted(false, 200_000)
+        assertEquals(f.reveal, sc.frame(200_000).reveal, 1e-6f)
+        assertEquals(1f, sc.frame(204_000).reveal, 1e-6f)
+    }
 }

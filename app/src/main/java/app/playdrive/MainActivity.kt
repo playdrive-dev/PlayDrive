@@ -23,6 +23,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.result.contract.ActivityResultContracts
 import app.playdrive.album.Album
 import app.playdrive.album.AlbumNaming
+import app.playdrive.album.CoverSpec
 import app.playdrive.album.DriveSummary
 import app.playdrive.album.MoodState
 import app.playdrive.album.MoodThrottle
@@ -104,6 +105,8 @@ class MainActivity : ComponentActivity(), DriveController.Listener {
 
         controller = DriveController(this, this)
         controller.prepare()
+        // 시작 화면: 가장 최근 앨범 커버를 은은하게 깔아 둔다(새 주행을 시작하면 새 커버로)
+        controller.albums.all().firstOrNull()?.let { mood.setCover(AlbumNaming.cover(it), immediate = true) }
         ux = UxRestrictionsWatcher(this) { r -> runOnUiThread { uxRestricted = r; applyDrivingPolicy() } }
         pendingIntent = intent
     }
@@ -145,11 +148,16 @@ class MainActivity : ComponentActivity(), DriveController.Listener {
         }
     }
 
+    override fun onCover(cover: CoverSpec) { mood.setCover(cover) }  // 주행 중이면 MoodView가 보관만, 정차하면 한 겹 그리는 장면
+
     override fun onSourceFinished() { debugStatus?.text = "데모 드라이브 끝" }
 
     override fun onDriveFinished(album: Album, suggestBreath: Boolean) {
         lastAlbum = album
-        if (suggestBreath && !driving) showBreathOffer(album) else if (!driving && screen == Screen.MOOD) showAlbum(album)
+        // 마지막 정차의 "한 겹 추가" 장면(4초)을 다 보여준 뒤 제안 카드·앨범으로
+        root.postDelayed({
+            if (suggestBreath && !driving) showBreathOffer(album) else if (!driving && screen == Screen.MOOD) showAlbum(album)
+        }, app.playdrive.ui.MoodScene.REVEAL_MS)
     }
 
     // ------------------------------------------------------------------ 화면들
@@ -195,7 +203,7 @@ class MainActivity : ComponentActivity(), DriveController.Listener {
         // 오늘 주행 곡(아주 작게): 커버 + 제목
         if (album != null) {
             val mini = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; alpha = 0.7f }
-            mini.addView(CoverView(this).apply { spec = AlbumNaming.cover(album.summary) }, LinearLayout.LayoutParams(dp(48), dp(48)))
+            mini.addView(CoverView(this).apply { spec = AlbumNaming.cover(album) }, LinearLayout.LayoutParams(dp(48), dp(48)))
             mini.addView(text(album.title, BODY_SP, color = 0xFFAFC0CC.toInt()).apply { setPadding(dp(14), 0, 0, 0) })
             frame.addView(mini, FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL).apply { bottomMargin = dp(28) })
         }
@@ -263,7 +271,7 @@ class MainActivity : ComponentActivity(), DriveController.Listener {
         val frame = FrameLayout(this).apply {
             setPadding(ring, ring, ring, ring)
             if (highlight) background = GradientDrawable().apply { cornerRadius = dp(20).toFloat(); setStroke(ring, 0x998FD3C6.toInt()) } // 새 앨범: 은은한 청록 테두리
-            addView(CoverView(this@MainActivity).apply { spec = AlbumNaming.cover(a.summary); clipToOutline = true; outlineProvider = roundedOutline(dp(16)) }, FrameLayout.LayoutParams(MATCH, MATCH))
+            addView(CoverView(this@MainActivity).apply { spec = AlbumNaming.cover(a); clipToOutline = true; outlineProvider = roundedOutline(dp(16)) }, FrameLayout.LayoutParams(MATCH, MATCH))
         }
         cell.addView(frame, LinearLayout.LayoutParams(size, size))
         // "두 번째 길"은 한 덩어리로(줄바꿈 시 "… 빗속의 / 두 번째 길")
@@ -283,7 +291,7 @@ class MainActivity : ComponentActivity(), DriveController.Listener {
         val pageView = FrameLayout(this).apply { setBackgroundColor(0xFF0F151D.toInt()) }
         // 위쪽은 뒤로 버튼 자리(20 + 76 + 8dp)를 비워 둔다 → 제목이 버튼 밑으로 들어가지 않음
         val body = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(dp(PAD_DP), dp(104), dp(PAD_DP), dp(PAD_DP)) }
-        val cover = CoverView(this).apply { spec = AlbumNaming.cover(album.summary); clipToOutline = true; outlineProvider = roundedOutline(dp(20)) }
+        val cover = CoverView(this).apply { spec = AlbumNaming.cover(album); clipToOutline = true; outlineProvider = roundedOutline(dp(20)) }
         body.addView(cover, LinearLayout.LayoutParams(dp(360), dp(360)))
         val info = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(36), 0, 0, 0) }
         info.addView(text(album.title, TITLE_SP, bold = true).apply { setLineSpacing(0f, 1.1f); phraseBreak() })
@@ -427,6 +435,7 @@ class MainActivity : ComponentActivity(), DriveController.Listener {
             DriveSummary(at(2, 8), at(2, 8) + 1_800_000, 74f, false, 1700) to "",                          // 그제 아침, 맑음
             DriveSummary(at(4, 14), at(4, 14) + 2_400_000, 41f, false, 2200) to "",                        // 나흘 전 한낮, 맑음·분주
         ).forEach { (s, note) -> controller.albums.add(Album(s.startEpochMs, s, AlbumNaming.uniqueTitle(s, controller.albums.all().map { it.summary }), note)) }
+        controller.albums.all().firstOrNull()?.let { mood.setCover(AlbumNaming.cover(it), immediate = true) }
         if (screen == Screen.ALBUM) showAlbum(null)
     }
 
