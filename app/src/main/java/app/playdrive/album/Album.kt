@@ -145,18 +145,11 @@ object AlbumNaming {
     fun cover(a: Album, tz: TimeZone = TimeZone.getDefault()): CoverSpec =
         if (a.layers.isNotEmpty()) CoverArt.spec(a.summary.startEpochMs, a.layers, tz) else cover(a.summary, tz)
 
-    /** 요약만 있을 때의 커버(겹 기록 이전 앨범·예시 앨범): 부드러움·비·시간대로. */
+    /** 요약만 있을 때의 커버(겹 기록 이전 앨범): 정차 횟수는 주행 시간으로 어림한다(약 7분에 한 번, 1~5). */
     fun cover(s: DriveSummary, tz: TimeZone = TimeZone.getDefault()): CoverSpec {
-        val calm = (s.smoothness / 100f).coerceIn(0f, 1f)
-        val rnd = Random(s.startEpochMs)
-        val n = 3 + (calm * 3).toInt()
-        val rainEach = if (s.rained) 24 / n + 1 else 0
-        val layers = List(n) {
-            CoverLayer(0.2f + rnd.nextFloat() * 0.6f, 0.2f + rnd.nextFloat() * 0.6f, 0.08f + rnd.nextFloat() * (0.12f + 0.12f * calm),
-                CoverArt.circleColor(calm), rainEach, 0, rnd.nextInt())
-        }
-        val glow = lerpColor(0x55E59A5C, 0x556CC3B5, calm)
-        return CoverSpec(s.startEpochMs, CoverArt.background(s.startEpochMs, tz), glow, layers, 1f - calm)
+        val stops = (s.movingSeconds / 420 + 1).coerceIn(1, CoverArt.MAX_LIGHTS)
+        val layers = CoverArt.layersFor(s.startEpochMs, stops, (s.smoothness / 100f).coerceIn(0f, 1f), s.movingSeconds, if (s.rained) 0.7f else 0f, 0)
+        return CoverArt.spec(s.startEpochMs, layers, tz)
     }
 
     fun lerpColor(a: Int, b: Int, t: Float): Int {

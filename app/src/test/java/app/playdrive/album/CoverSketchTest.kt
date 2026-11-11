@@ -1,6 +1,8 @@
 package app.playdrive.album
 
+import app.playdrive.engine.DrivingEvent
 import app.playdrive.engine.DrivingEventEngine
+import app.playdrive.engine.DrivingState
 import app.playdrive.sim.DemoDriveScenario
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -42,5 +44,33 @@ class CoverSketchTest {
         assertTrue(l.r > busy.r)
         assertEquals(3, busy.scars)
         assertTrue(l.color != busy.color)
+    }
+
+    @Test fun `커버 규칙 - 정차 횟수만큼 빛(1~5), 같은 주행은 같은 커버, 다른 주행은 다른 자리`() {
+        for (n in 1..5) assertEquals(n, CoverArt.layersFor(42L, n, 0.7f, 900, 0f, 0).size)
+        assertEquals(5, CoverArt.layersFor(42L, 9, 0.7f, 900, 0f, 0).size)
+        assertEquals(CoverArt.layersFor(42L, 3, 0.7f, 900, 0.5f, 1), CoverArt.layersFor(42L, 3, 0.7f, 900, 0.5f, 1))
+        val a = CoverArt.layersFor(1_000L, 3, 0.7f, 900, 0f, 0); val b = CoverArt.layersFor(2_000L, 3, 0.7f, 900, 0f, 0)
+        assertTrue(a.zip(b).any { (p, q) -> kotlin.math.abs(p.x - q.x) + kotlin.math.abs(p.y - q.y) > 0.05f })
+    }
+
+    @Test fun `커버 규칙 - 짧은 주행은 빛이 모이고 긴 주행은 퍼진다`() {
+        fun spread(sec: Int) = CoverArt.layersFor(7L, 4, 0.7f, sec, 0f, 0).let { ls ->
+            val cx = ls.map { it.x }.average(); val cy = ls.map { it.y }.average()
+            ls.map { kotlin.math.hypot(it.x - cx, it.y - cy) }.average()
+        }
+        assertTrue(spread(3_000) > spread(120) * 1.8)
+    }
+
+    @Test fun `여섯 번째 정차부터는 빛을 늘리지 않고 합친다`() {
+        var t = 0L
+        val sk = CoverSketch { 5L }
+        fun st(moving: Boolean) = DrivingState(timeMs = t, speedMps = if (moving) 10f else 0f, moving = moving)
+        repeat(7) {
+            sk.update(st(false), listOf(DrivingEvent.Departed(t)))
+            repeat(5) { t += 1_000; sk.update(st(true), emptyList()) }
+            sk.update(st(false), listOf(DrivingEvent.Stopped(t)))
+        }
+        assertEquals(5, sk.layers.size)
     }
 }

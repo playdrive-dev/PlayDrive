@@ -166,6 +166,7 @@ class MainActivity : ComponentActivity(), DriveController.Listener {
         }
         add(play, play.width / 2f)
         add(albumBtn, albumBtn.height / 2f)
+        overlay?.let { add(it, dp(28).toFloat()) }
         mood.glass = list
     }
 
@@ -231,7 +232,8 @@ class MainActivity : ComponentActivity(), DriveController.Listener {
         val card = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(36), dp(32), dp(36), dp(24))
-            background = GradientDrawable().apply { cornerRadius = dp(28).toFloat(); setColor(0xF01B2633.toInt()) }
+            background = app.playdrive.ui.GlassDrawable(dp(28).toFloat(), glassBehind = mood.usesShader)  // 버튼과 같은 유리
+            addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> updateGlass() }
         }
         card.addView(text(getString(R.string.breath_offer_title), TITLE_SP, bold = true))
         card.addView(text(getString(R.string.breath_offer_body), BODY_SP, color = 0xFFC9D3DC.toInt()).apply { setPadding(0, dp(12), 0, dp(20)); setLineSpacing(0f, 1.15f); phraseBreak() })
@@ -436,7 +438,7 @@ class MainActivity : ComponentActivity(), DriveController.Listener {
      * 디버그 빌드 전용(테스트·스크린샷·영상):
      *  --es debug demo | real | stop
      *  --es debug screen:mood | screen:drive | screen:park | screen:breath | screen:album | screen:detail[:n] | screen:debug
-     *  --es debug seed:albums   (기존 앨범을 지우고 예시 앨범 3장 생성, 기기 안에만)
+     *  --es debug seed:albums   (기존 앨범을 모두 지우고 예시 앨범 6장 생성, 기기 안에만)
      *  --es debug icon:debug:off|on   (무드 화면의 디버그 아이콘 숨김 — 스크린샷용)
      *  --es debug welcome | goodbye | wake | daypart:MORNING|DAY|EVENING|NIGHT|DAWN|auto | rain:on|off | render:1.0|0.5|canvas
      *  --es debug layers:PAD,BASS,...  /  cue:TAPE_STOP|SCRATCH  /  fx:TapeStop|LowpassDip|PitchWobble
@@ -496,20 +498,31 @@ class MainActivity : ComponentActivity(), DriveController.Listener {
         }
     }
 
-    /** 스크린샷용 예시 앨범(가상의 주행 3회: 요일·시간대·날씨가 모두 다름). 기존 앨범은 지운다. 기기 안에만 저장. */
+    /**
+     * 스크린샷용 예시 앨범 6장: 시간대·날씨·정차 횟수가 모두 다른 가상의 주행. 기존(데모로 쌓인) 앨범은 모두 지운다. 기기 안에만 저장.
+     * 커버는 [CoverArt.layersFor]: 정차 횟수 = 빛의 개수, 부드러움 = 크기·선명도, 주행 시간 = 퍼짐, 비 = 물방울, 테이프스톱 = 물결 흩어짐.
+     */
     private fun seedAlbums() {
         controller.albums.clear()
         val now = System.currentTimeMillis()
         val day = 86_400_000L
-        fun at(daysAgo: Int, hour: Int): Long {
+        fun at(daysAgo: Int, hour: Int, minute: Int = 10): Long {
             val c = java.util.Calendar.getInstance(); c.timeInMillis = now - daysAgo * day
-            c.set(java.util.Calendar.HOUR_OF_DAY, hour); c.set(java.util.Calendar.MINUTE, 10); return c.timeInMillis
+            c.set(java.util.Calendar.HOUR_OF_DAY, hour); c.set(java.util.Calendar.MINUTE, minute); c.set(java.util.Calendar.SECOND, 0); c.set(java.util.Calendar.MILLISECOND, 0); return c.timeInMillis
         }
+        data class Seed(val start: Long, val minutes: Int, val smooth: Float, val rain: Float, val stops: Int, val breaks: Int, val note: String)
         listOf(
-            DriveSummary(at(1, 21), at(1, 21) + 1_500_000, 82f, true, 1400) to "빗소리랑 같이 천천히 왔다",  // 어제 밤, 비
-            DriveSummary(at(2, 8), at(2, 8) + 1_800_000, 74f, false, 1700) to "",                          // 그제 아침, 맑음
-            DriveSummary(at(4, 14), at(4, 14) + 2_400_000, 41f, false, 2200) to "",                        // 나흘 전 한낮, 맑음·분주
-        ).forEach { (s, note) -> controller.albums.add(Album(s.startEpochMs, s, AlbumNaming.uniqueTitle(s, controller.albums.all().map { it.summary }), note)) }
+            Seed(at(1, 21), 25, 82f, 0.8f, 3, 0, "빗소리랑 같이 천천히 왔다"),   // 어제 밤 · 비 · 정차 3
+            Seed(at(1, 8), 34, 74f, 0f, 5, 1, ""),                          // 어제 아침 · 맑음 · 정차 5
+            Seed(at(2, 18), 14, 68f, 0f, 2, 1, "노을이 길게 남았다"),          // 그제 저녁(노을) · 맑음 · 정차 2
+            Seed(at(3, 14), 42, 41f, 0f, 4, 3, ""),                         // 사흘 전 한낮 · 분주 · 정차 4
+            Seed(at(4, 7, 40), 6, 60f, 1f, 1, 0, ""),                       // 나흘 전 아침 · 비 · 정차 1
+            Seed(at(5, 4, 30), 18, 92f, 0f, 2, 0, ""),                      // 닷새 전 새벽 · 맑음 · 정차 2
+        ).forEach { d ->
+            val s = DriveSummary(d.start, d.start + d.minutes * 60_000L + 300_000L, d.smooth, d.rain > 0f, d.minutes * 60)
+            val layers = app.playdrive.album.CoverArt.layersFor(d.start, d.stops, d.smooth / 100f, s.movingSeconds, d.rain, d.breaks)
+            controller.albums.add(Album(d.start, s, AlbumNaming.uniqueTitle(s, controller.albums.all().map { it.summary }), d.note, layers))
+        }
         controller.albums.all().firstOrNull()?.let { mood.setCover(AlbumNaming.cover(it), immediate = true) }
         if (screen == Screen.ALBUM) showAlbum(null)
     }

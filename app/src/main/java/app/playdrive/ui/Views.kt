@@ -89,6 +89,21 @@ object Glass {
     }
 }
 
+/** 유리 카드 배경(주차 카드 등): 버튼과 같은 질감. 흐림은 뒤의 셰이더가 같은 자리에 그린다. */
+class GlassDrawable(private val radius: Float, private val glassBehind: Boolean) : android.graphics.drawable.Drawable() {
+    private val dim = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.argb(70, 8, 12, 18) }
+    override fun draw(c: Canvas) {
+        val b = bounds
+        // 흐린 장면 위에 아주 옅게 어둡게 → 긴 글도 읽힌다(셰이더 없는 기기는 면을 더 진하게)
+        dim.alpha = if (glassBehind) 70 else 200
+        c.drawRoundRect(b.left.toFloat(), b.top.toFloat(), b.right.toFloat(), b.bottom.toFloat(), radius, radius, dim)
+        Glass.draw(c, b.left.toFloat(), b.top.toFloat(), b.right.toFloat(), b.bottom.toFloat(), radius, glassBehind)
+    }
+    override fun setAlpha(alpha: Int) {}
+    override fun setColorFilter(cf: android.graphics.ColorFilter?) {}
+    @Deprecated("Deprecated in Java") override fun getOpacity() = android.graphics.PixelFormat.TRANSLUCENT
+}
+
 /** 재생/일시정지(글자 없음): 유리 원 + 얇은 선 아이콘. */
 class PlayPauseButton(context: Context) : View(context) {
     var playing = false
@@ -256,20 +271,18 @@ object CoverPainter {
                     c.drawLine(X(rx), Y(ry), X(rx - 0.025f * grow), Y(ry + len), p)
                 }
             }
-            // 깨진 순간: 물결이 흐트러진 자국(바탕 물결 위 들쭉날쭉한 짧은 선)
-            if (l.scars > 0) {
-                p.style = Paint.Style.STROKE; p.strokeWidth = side * 0.01f
-                p.color = a(0xCCF2E6D8.toInt(), alpha * k)
-                val rnd = java.util.Random(l.seed.toLong() * 7 + 1)
-                repeat(l.scars) { n ->
-                    val cxs = (l.x + (rnd.nextFloat() - 0.5f) * 0.3f).coerceIn(0.12f, 0.88f)
-                    val cy = 0.8f + (n - 1) * 0.035f
-                    val half = 0.09f * grow
-                    path.reset(); path.moveTo(X(cxs - half), Y(cy))
-                    var q = -half; var up = true
-                    while (q <= half) { path.lineTo(X(cxs + q), Y(cy + (if (up) -1 else 1) * 0.03f * (1f - kotlin.math.abs(q) / (half + 1e-4f)))); up = !up; q += 0.018f }
-                    c.drawPath(path, p)
+            // 깨진 순간(앨범 커버만): 바탕 물결이 그 자리에서 한 번 부드럽게 출렁이며 흩어진 자국
+            if (l.scars > 0 && fadeTo == null) {
+                p.style = Paint.Style.STROKE; p.strokeWidth = side * (0.006f + 0.004f * l.scars)
+                p.color = a(0x55F2E6D8, alpha * k)
+                val half = 0.12f * grow
+                path.reset(); path.moveTo(X(l.x - half), Y(0.8f))
+                var q = -half
+                while (q <= half) {
+                    val e = kotlin.math.exp(-(q / (half * 0.5f)) * (q / (half * 0.5f)))
+                    path.lineTo(X(l.x + q), Y(0.8f + 0.03f * e * sin(q / half * PI * 1.3).toFloat())); q += half / 24
                 }
+                c.drawPath(path, p)
             }
         }
         p.style = Paint.Style.FILL

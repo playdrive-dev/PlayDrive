@@ -8,11 +8,13 @@ import androidx.annotation.RequiresApi
  * 빛을 재료로 쓰는 화면(AGSL, API 33+). 무드 화면과 마음 앨범 커버가 같은 셰이더를 쓴다(coverMode).
  *
  * 뒤 → 앞:
- *  1) 시간대 색온도 그라데이션 + 바닥 반사 띠 근처의 옅은 빛
+ *  1) 시간대 색온도 그라데이션(OKLCh 보간 — 노을 중간이 탁해지지 않게) + 바닥 반사 띠 근처의 옅은 빛 + 아침 햇빛
  *  2) 메인 빛: 가우시안 세 겹(심·몸통·후광) + 가장자리 노이즈로 흩어짐
  *  3) 보조 빛: 깊이(크기·흐림·세기)가 다른 빛들(오늘 커버의 겹)
- *  4) 물결: 빛이 바닥에 반사된 듯한 가는 하이라이트 띠(빛 아래일수록 밝음), 테이프스톱 자국은 띠가 한 번 흐트러진 곳
- *  5) 비: 앞유리 물방울(작은 원형 렌즈 → 뒤의 빛이 뒤집혀 일그러짐) + 아주 옅은 흐름 자국
+ *  4) 물결: 빛이 바닥에 반사된 듯한 가는 하이라이트 띠(빛 아래일수록 밝음).
+ *     테이프스톱 자국(앨범 커버만): 그 자리에서 띠가 한 번 부드럽게 출렁이며 넓게 흩어짐
+ *  5) 비: 앞유리 물방울 — 대부분 투명한 작은 렌즈(뒤의 장면이 뒤집혀 비침), 빛 쪽에만 작은 반짝임,
+ *     작은 방울이 많고 큰 방울은 적다. 3~5개는 아래로 흘러내린 자국
  *  6) 미세 필름 그레인(픽셀 고정, 깜빡이지 않음 — 밴딩 제거용)
  *  + 유리 패널(재생·앨범 버튼 뒤): 같은 장면을 더 흐리게 + 살짝 밝게
  */
@@ -37,10 +39,12 @@ uniform float bandY;
 uniform float bandWave;
 uniform float rain;
 uniform float rainSeed;
-uniform float4 glass[2];
+uniform float4 glass[3];
 uniform float4 glassRad;
 uniform float glassCount;
 uniform float master;
+uniform float4 sun;
+uniform float3 sunCol;
 
 const float TAU = 6.2831853;
 
@@ -74,8 +78,24 @@ float sdRound(float2 q, float4 r, float rad) {
     return length(max(d, 0.0)) + min(max(d.x, d.y), 0.0) - rad;
 }
 
+// OKLCh(L, C, h) → sRGB. bgTop·bgBottom은 OKLCh로 들어온다(LightParams.gradientLch).
+float3 fromLch(float3 c) {
+    float A = c.y * cos(c.z);
+    float B = c.y * sin(c.z);
+    float l = c.x + 0.3963377774 * A + 0.2158037573 * B;
+    float m = c.x - 0.1055613458 * A - 0.0638541728 * B;
+    float s = c.x - 0.0894841775 * A - 1.2914855480 * B;
+    l = l * l * l; m = m * m * m; s = s * s * s;
+    float3 lin = float3(4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s,
+                        -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s,
+                        -0.0041960863 * l - 0.7034186147 * m + 1.7076147010 * s);
+    return pow(clamp(lin, 0.0, 1.0), float3(1.0 / 2.2));
+}
+
+float3 bgCol(float2 p) { return fromLch(mix(bgTop, bgBottom, smoothstep(0.0, 1.0, p.y))); }
+
 float3 sceneCol(float2 p, float blur) {
-    float3 bg = mix(bgTop, bgBottom, smoothstep(0.0, 1.0, p.y));
+    float3 bg = bgCol(p);
     float hz = (p.y - bandY) / 0.20;
     bg += horizon * exp(-hz * hz) * 0.14;
 
@@ -85,6 +105,12 @@ float3 sceneCol(float2 p, float blur) {
 
     float3 light = float3(0.0);
     float3 refl = float3(0.0);
+    if (sun.w > 0.0) {
+        // 오른쪽 위에서 비쳐 드는 옅은 햇빛: 넓고 부드러운 두 겹
+        float2 q = (p - sun.xy) / (sun.z * (1.0 + blur * 2.0));
+        float d2 = dot(q, q);
+        light += sunCol * sun.w * (exp(-d2) * 0.55 + exp(-d2 * 0.18) * 0.30);
+    }
     for (int i = 0; i < 8; i++) {
         if (float(i) < lightCount) {
             float4 L = lights[i];
@@ -113,18 +139,21 @@ float3 sceneCol(float2 p, float blur) {
     // 바닥 반사: 가는 하이라이트 띠 두 줄. 테이프스톱 자국 = 그 자리에서 띠가 한 번 흐트러짐
     float disp = bandWave * sin(p.x * 7.0 + TAU * iTime / 12.0) + bandWave * 0.5 * sin(p.x * 13.0 - TAU * iTime / 10.0);
     float broken = 1.0;
+    float spreadW = 0.0;
     for (int k = 0; k < 4; k++) {
         if (float(k) < scarCount) {
-            float sx = (p.x - scars[k].x) / 0.06;
+            // 한 번 부드럽게 출렁이고(사인 한 주기), 그 자리의 띠가 넓고 옅게 흩어진다
+            float sx = (p.x - scars[k].x) / 0.10;
             float s = scars[k].y * exp(-sx * sx);
-            disp += s * (noise(float2(p.x * 110.0, float(k) * 7.0)) - 0.5) * 0.024;
-            broken *= 1.0 - s * 0.55 * step(0.45, noise(float2(p.x * 55.0, float(k) * 3.0 + 1.0)));
+            disp += s * 0.020 * sin(sx * 2.6 + float(k));
+            spreadW += s * 2.2;
+            broken *= 1.0 - s * 0.35;
         }
     }
-    float bw = 0.0022 + blur * 0.03;
+    float bw = (0.0022 + blur * 0.03) * (1.0 + spreadW);
     float b1 = (p.y - bandY - disp) / bw;
     float b2 = (p.y - bandY - 0.032 - disp * 1.4) / (bw * 1.4);
-    float band = exp(-b1 * b1) + 0.35 * exp(-b2 * b2);
+    float band = (exp(-b1 * b1) + 0.35 * exp(-b2 * b2)) / (1.0 + spreadW * 0.5);
     float under = smoothstep(bandY, bandY + 0.25, p.y) * (1.0 - smoothstep(bandY + 0.05, bandY + 0.35, p.y));
     float3 floorGlow = refl * (band * broken * 0.75 + under * 0.08);
 
@@ -133,33 +162,58 @@ float3 sceneCol(float2 p, float blur) {
     return bg + (1.0 - bg) * (1.0 - exp(-total * 1.1));
 }
 
-// 앞유리 물방울: (굴절 오프셋 xy, 테두리 그늘, 반짝임)
-float4 drops(float2 p) {
+// 작은 렌즈 하나: (굴절 오프셋 xy, 반짝임). v = 렌즈 중심 기준 위치 / 반지름, rp = 반지름(장면 좌표).
+// 뒤의 장면을 뒤집어 비춘다(중심 대칭 + 약간 넓게). 테두리는 그리지 않는다.
+float3 lens(float2 v, float rp, float2 toLight) {
+    float d = length(v);
+    if (d >= 1.0) return float3(0.0);
+    float z = sqrt(1.0 - d * d);
+    float2 off = -v * rp * (1.6 + 0.8 * z);
+    // 빛이 있는 쪽 가장자리 안쪽에 작은 반짝임
+    float2 sp = (v - toLight * 0.55) / 0.22;
+    return float3(off, exp(-dot(sp, sp)));
+}
+
+// 앞유리 물방울: (굴절 오프셋 xy, 반짝임, 흐름 자국의 젖은 정도)
+float4 drops(float2 p, float2 lightPos) {
     float4 res = float4(0.0);
-    for (int k = 0; k < 2; k++) {
-        float cell = k == 0 ? 0.060 : 0.034;
-        float2 g = p / cell;
-        float2 id = floor(g);
-        float2 f = fract(g) - 0.5;
-        float h = hash(id + rainSeed + float(k) * 17.0);
-        if (h < rain * (k == 0 ? 0.42 : 0.55)) {
-            float2 c = (float2(hash(id + 3.1), hash(id + 7.7)) - 0.5) * 0.36;
-            float rad = 0.12 + 0.14 * hash(id + 11.3);
-            float2 v = (f - c) / rad;
-            float d = length(v);
-            if (d < 1.0) {
-                float z = sqrt(1.0 - d * d);
-                res.xy += -v * (0.6 + 0.4 * z) * rad * cell * 2.8;
-                res.z = max(res.z, smoothstep(0.7, 1.0, d) * 0.6);
-                float2 sp = (v - float2(-0.35, -0.42)) / 0.22;
-                res.w = max(res.w, exp(-dot(sp, sp)));
-            } else if (h < rain * 0.18) {
-                // 아주 옅은 흐름 자국: 물방울 위로 가는 세로 줄
-                float tx = (f.x - c.x) / (rad * 0.16);
-                float above = smoothstep(-0.5, c.y - rad, f.y) * step(f.y, c.y - rad);
-                res.x += exp(-tx * tx) * above * 0.0015;
-                res.z = max(res.z, exp(-tx * tx) * above * 0.08);
+    float aspect = iResolution.x / iResolution.y;
+    float cell = 0.045;
+    float2 g = p / cell;
+    float2 id = floor(g);
+    float2 f = fract(g) - 0.5;
+    float h = hash(id + rainSeed);
+    if (h < rain * 0.40) {
+        float hs = hash(id + 11.3);
+        float rad = 0.06 + 0.32 * hs * hs * hs;              // 작은 방울이 대부분, 큰 방울은 드물게
+        float2 c = (float2(hash(id + 3.1), hash(id + 7.7)) - 0.5) * (0.9 - 2.0 * rad);
+        float2 toL = normalize(lightPos - (id + 0.5 + c) * cell + 1e-4);
+        float3 L = lens((f - c) / rad, rad * cell, toL);
+        res.xy += L.xy;
+        res.z = max(res.z, L.z * smoothstep(0.13, 0.26, rad));   // 반짝임은 큰 방울에만
+    }
+    // 흘러내린 자국 3~5개: 가는 젖은 줄 + 끝에 맺힌 방울
+    float nt = 3.0 + floor(hash(float2(rainSeed, 5.0)) * 2.99);
+    for (int k = 0; k < 5; k++) {
+        if (float(k) < nt && rain > 0.05) {
+            float fk = float(k);
+            float tx = (0.06 + 0.88 * fract(hash(float2(rainSeed + fk * 13.1, 1.7)) + fk * 0.21)) * aspect;
+            float ty = 0.04 + 0.40 * hash(float2(rainSeed + fk * 5.3, 2.9));
+            float len = 0.12 + 0.28 * hash(float2(rainSeed + fk * 2.7, 4.1));
+            float yy = (p.y - ty) / len;
+            float wob = 0.0012 * sin(p.y * 37.0 + fk * 2.0) + 0.0006 * sin(p.y * 91.0 + fk);
+            if (yy > 0.0 && yy < 1.0) {
+                float w = 0.0012 + 0.0014 * yy;
+                float dx = (p.x - tx - wob) / w;
+                float wet = exp(-dx * dx) * smoothstep(0.0, 0.35, yy) * (0.55 + 0.45 * step(0.3, noise(float2(p.y * 70.0, fk * 9.0))));
+                res.x += -dx * w * 0.6 * wet;
+                res.w = max(res.w, wet);
             }
+            float2 dc = float2(tx + 0.0012 * sin((ty + len) * 37.0 + fk * 2.0) + 0.0006 * sin((ty + len) * 91.0 + fk), ty + len + 0.004);
+            float rp = 0.0075;
+            float3 L = lens((p - dc) / rp, rp, normalize(lightPos - dc + 1e-4));
+            res.xy += L.xy;
+            res.z = max(res.z, L.z);
         }
     }
     return res;
@@ -169,19 +223,29 @@ half4 main(float2 fc) {
     float2 p = fc / iResolution.y;
     float blur = 0.0;
     float edge = 0.0;
-    for (int i = 0; i < 2; i++) {
+    for (int i = 0; i < 3; i++) {
         if (float(i) < glassCount) {
-            float rad = i == 0 ? glassRad.x : glassRad.y;
+            float rad = i == 0 ? glassRad.x : (i == 1 ? glassRad.y : glassRad.z);
             float s = sdRound(fc, glass[i], rad);
             if (s < 0.0) { blur = 0.045; edge = 1.0; }
         }
     }
     float4 dr = float4(0.0);
-    if (rain > 0.001) dr = drops(p);
+    if (rain > 0.001) {
+        float2 lp = mainLight.w > 0.0 ? mainLight.xy : (lightCount > 0.0 ? lights[0].xy : float2(iResolution.x / iResolution.y * 0.7, 0.2));
+        dr = drops(p, lp);
+    }
     float3 col = sceneCol(p + dr.xy, blur);
-    col *= 1.0 - dr.z * 0.35;
-    col += float3(0.9, 0.95, 1.0) * dr.w * 0.18;
-    if (edge > 0.5) col = mix(col, float3(1.0), 0.07);
+    float3 W = float3(0.299, 0.587, 0.114);
+    float lum = dot(col, W);
+    // 반짝임은 빛이 있는 곳에서만: 바탕보다 밝은 만큼(빛의 몫)에 비례. 빛 없는 바탕에선 거의 보이지 않는다.
+    if (dr.z > 0.0) {
+        float lit = smoothstep(0.08, 0.30, lum - dot(bgCol(p), W));
+        col += float3(1.0, 0.97, 0.92) * dr.z * 0.45 * lit;
+    }
+    col += col * dr.w * 0.06;
+    // 유리: 어두운 바탕에선 살짝 밝게, 밝은 바탕(노을 아래쪽 등)에선 살짝 어둡게 → 흰 선 아이콘이 늘 읽힌다
+    if (edge > 0.5) col = mix(mix(col, float3(1.0), 0.07), col * 0.78, smoothstep(0.35, 0.55, lum));
     col *= master;
     // 필름 그레인(픽셀마다 고정)
     col += (hash(fc * 0.731 + 17.0) - 0.5) * (2.2 / 255.0);

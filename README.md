@@ -12,7 +12,9 @@
 2. Pleos Connect 에뮬레이터를 준비합니다.
    - SDK Manager > SDK Update Sites에 `https://nexus-playground.pleos.ai/repository/raw-releases/connect-avd/2.x/crp-arm64-sys-img.xml`을 추가합니다.
    - API 34 *Pleos Connect v2.1.0* system image를 설치한 뒤 Automotive AVD를 만듭니다(RAM 4GB, Cold boot).
-   - Apple Silicon Mac에서 부팅 직후 멈추면 `-gpu swiftshader_indirect` 옵션으로 실행하세요.
+   - 실행: `emulator -avd <AVD 이름> -no-snapshot-load -gpu host -timezone Asia/Seoul` (에뮬레이터 37.1 기준. Mac GPU로 그려 정차 중 30fps).
+     예전 에뮬레이터에서 `-gpu host`가 부팅 직후 멈추면 `-gpu swiftshader_indirect`(소프트웨어, 약 5fps)로 실행하세요.
+   - 시연 영상 녹화: `adb emu screenrecord start --time-limit 120 --fps 30 out.webm` (2560×1440, 30fps) → `adb emu screenrecord stop`.
 3. 빌드·설치:
    ```bash
    ./gradlew assembleDebug
@@ -21,6 +23,19 @@
 4. 앱을 실행하면 음원을 불러온 뒤(첫 실행 약 2초) 버튼이 활성화됩니다.
    - **데모 드라이브(74초)**: 출발 드롭 → 부드러운 가속(아르페지오) → 정속 → 방향지시등(셰이커)·차선 변경 → 부드러운 제동(근음+5도) → 신호 대기 브레이크다운 → 재출발 드롭 → 비 → 급제동(테이프스톱) → 회복 → 정차 → 주차 순서로 차량 신호를 주입해 음악 반응을 보여줍니다.
    - **실제 차량 신호**: 차량(또는 에뮬레이터 Virtual Console)의 속도·기어·브레이크·방향지시등·와이퍼·조향·착좌 신호로 연주합니다. 속도 권한(`android.car.permission.CAR_SPEED`)을 허용해야 합니다.
+
+## 화면 v3 — 다듬은 빛
+
+빗방울은 대부분 투명한 작은 렌즈(뒤 장면이 뒤집혀 비침, 빛 쪽에만 반짝임, 3~5개는 흘러내린 자국), 노을은 남보라→앰버를 OKLCh로 보간, 아침은 오른쪽 위 금빛 햇빛, 제안 카드는 버튼과 같은 유리. 테이프스톱 흔적은 앨범 커버에만(물결이 한 번 부드럽게 흩어진 모양).
+앨범 커버 규칙: 시간대 = 바탕색, 정차 횟수 = 빛의 개수(1~5), 부드러움 = 빛의 크기·선명도, 주행 시간 = 빛의 퍼짐, 비 = 물방울, 테이프스톱 = 물결 흩어짐, 주행 ID로 고정.
+
+| 아침 · 정차 · 비 | 노을 · 정차 | 밤 · 주행 중(정지 프레임) | 제안 카드(유리) |
+|---|---|---|---|
+| ![](docs/screens/v3/morning_03_parked_rain.jpg) | ![](docs/screens/v3/sunset_02_parked.jpg) | ![](docs/screens/v3/night_04_driving_frozen.jpg) | ![](docs/screens/v3/sunset_08_park_card.jpg) |
+| **정차: 지난 구간이 한 겹(빛)으로** | **노을 · 비** | **마음 앨범(6장 예시)** | **앨범 상세** |
+| ![](docs/screens/v3/night_05_stop_reveal.jpg) | ![](docs/screens/v3/sunset_03_parked_rain.jpg) | ![](docs/screens/v3/20_album_grid.jpg) | ![](docs/screens/v3/21_album_detail.jpg) |
+
+전체 목록은 `docs/screens/v3/`(v2와 같은 구성, `*_full.jpg` = 차량 화면 전체 2560×1440).
 
 ## 화면 v2 — 빛을 재료로 쓰는 화면
 
@@ -61,7 +76,7 @@
 - 사용 권한(읽기 전용): `android.car.permission.CAR_SPEED`, `android.car.permission.CAR_POWERTRAIN`, `pleos.car.permission.CAR_DRIVE`, `CAR_LIGHTS`, `CAR_WINDOWS`, `CAR_SEATS`
 - 단위 테스트: `./gradlew :app:testDebugUnitTest`
 - 디버그 빌드 화면 바로 열기: `adb shell am start -n app.playdrive/.MainActivity --es debug <명령>`
-  - `demo`(74초 데모 드라이브), `screen:mood`, `screen:drive`(주행 중 모습), `screen:park`(주차 후 1분 제안), `screen:breath`, `screen:album`, `seed:albums`(예시 앨범 3장)
+  - `demo`(74초 데모 드라이브), `screen:mood`, `screen:drive`(주행 중 모습), `screen:park`(주차 후 1분 제안), `screen:breath`, `screen:album`, `seed:albums`(데모 앨범을 모두 지우고 예시 앨범 6장)
 
 ## APK
 

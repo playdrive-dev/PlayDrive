@@ -47,4 +47,33 @@ class LightParamsTest {
         assertEquals(0f, uc.getValue("rain")[0], 0f); assertTrue(ub.getValue("rain")[0] > 0f)
         assertEquals(0f, uc.getValue("scarCount")[0], 0f); assertEquals(1f, ub.getValue("scarCount")[0], 0f)
     }
+
+    @Test fun `노을 그라데이션 - OKLCh 보간이라 중간이 탁해지지 않는다`() {
+        val e = LightParams.palette(PartOfDay.EVENING)
+        fun chroma(c: FloatArray) = LightParams.oklch(c)[1]
+        val mid = LightParams.gradientAt(e.top, e.bottom, 0.5f)
+        val srgbMid = FloatArray(3) { (e.top[it] + e.bottom[it]) / 2 }
+        // 양 끝 채도의 평균에 가깝게 유지(단순 sRGB 섞기는 크게 떨어진다)
+        val ends = (chroma(e.top) + chroma(e.bottom)) / 2
+        assertTrue("mid ${chroma(mid)} ends $ends", chroma(mid) > ends * 0.85f)
+        assertTrue(chroma(mid) > chroma(srgbMid) * 1.3f)
+        // 끝점은 그대로 돌아온다
+        val top = LightParams.gradientAt(e.top, e.bottom, 0f)
+        for (i in 0..2) assertEquals(e.top[i], top[i], 0.01f)
+    }
+
+    @Test fun `아침에만 오른쪽 위 햇빛`() {
+        val m = LightParams.palette(PartOfDay.MORNING)
+        assertTrue(m.sun[3] > 0f && m.sun[0] > 0.8f && m.sun[1] < 0.1f)
+        assertTrue(m.sunCol[0] > m.sunCol[2])                               // 따뜻한 금빛
+        listOf(PartOfDay.DAY, PartOfDay.EVENING, PartOfDay.NIGHT, PartOfDay.DAWN).forEach { assertEquals(0f, LightParams.palette(it).sun[3], 0f) }
+    }
+
+    @Test fun `실시간 무드 화면에는 테이프스톱 흔적이 없다 - 커버에만`() {
+        val broken = CoverArt.spec(7L, List(3) { CoverArt.layer(it, 7L, 0.3f, 30f, 0f, 2) })
+        val sc = MoodScene(startMs = 0, initial = MoodState(0.3f, 0.7f, 0.2f, false))
+        sc.setCover(broken, 0, immediate = true)
+        assertEquals(0f, LightParams.mood(sc.frame(10_000), 1682f, 1210f).getValue("scarCount")[0], 0f)
+        assertTrue(LightParams.cover(broken, 400f).getValue("scarCount")[0] > 0f)
+    }
 }
