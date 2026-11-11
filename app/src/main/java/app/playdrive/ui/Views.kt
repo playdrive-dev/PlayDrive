@@ -20,31 +20,17 @@ import kotlin.math.min
 import kotlin.math.sin
 
 /**
- * 운전 중 무드 화면: 단색 배경 + 추상 그래픽(겹친 원과 물결). 글자·숫자 없음.
+ * (API 33 미만 대체) 운전 중 무드 화면: 단색 배경 + 추상 그래픽(겹친 원과 물결). 글자·숫자 없음.
  * 상태·시간 규칙은 [MoodScene](순수, 단위 테스트):
  * - restricted(주행 중, SA-1): 완전히 멈춤. 다시 그리지도 않는다(invalidate 없음 → CPU도 0에 가깝다).
  * - 정차 중: 원이 12초 주기로 아주 천천히 숨 쉬듯 움직이고, 주행 중 쌓인 음악 상태로 3초에 걸쳐 바뀐다.
  */
-class MoodView(context: Context) : View(context) {
+class CanvasMoodLayer(context: Context, private val host: MoodView) : View(context) {
     private fun now() = SystemClock.uptimeMillis()
-    val scene = MoodScene(now())
-    var restricted: Boolean
-        get() = scene.restricted
-        set(v) { if (v != scene.restricted) { scene.setRestricted(v, now()); invalidate() } }
-
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val wavePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeWidth = 3f }
     private val path = Path()
-
-    fun setCover(c: CoverSpec?, immediate: Boolean = false) {
-        scene.setCover(c, now(), immediate)
-        if (!scene.restricted) invalidate()
-    }
-
-    fun show(s: MoodState, immediate: Boolean = false) {
-        scene.show(s, now(), immediate)
-        if (!scene.restricted) invalidate()
-    }
+    private val scene get() = host.scene
 
     override fun onDraw(c: Canvas) {
         val f = scene.frame(now())
@@ -84,55 +70,70 @@ class MoodView(context: Context) : View(context) {
             wavePaint.color = Color.argb(40, 200, 220, 255)
             for (i in 0 until 14) { val x = w * (i + 0.5f) / 14; c.drawLine(x, h * 0.1f, x - 20, h * 0.1f + 60, wavePaint) }
         }
+        if (f.master < 1f) c.drawColor(Color.argb(((1f - f.master) * 255).toInt(), 0, 0, 0))
         if (scene.animating && isAttachedToWindow) postInvalidateOnAnimation()
     }
 }
 
-/** 재생/일시정지 아이콘 버튼(글자 없음). */
+/**
+ * 유리 질감 바탕: 1px 하이라이트 테두리(위쪽이 더 밝음). 흐림은 뒤의 무드 셰이더가 그 자리에서 그린다(glassBehind = true).
+ * 셰이더가 없는 기기(API 33 미만)에서는 옅은 반투명 면을 직접 깐다.
+ */
+object Glass {
+    private val fill = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL; color = Color.argb(34, 255, 255, 255) }
+    private val rim = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeWidth = 1f }
+    fun draw(c: Canvas, l: Float, t: Float, r: Float, b: Float, radius: Float, glassBehind: Boolean) {
+        if (!glassBehind) c.drawRoundRect(l, t, r, b, radius, radius, fill)
+        rim.shader = android.graphics.LinearGradient(0f, t, 0f, b, Color.argb(150, 255, 255, 255), Color.argb(26, 255, 255, 255), Shader.TileMode.CLAMP)
+        c.drawRoundRect(l + 0.5f, t + 0.5f, r - 0.5f, b - 0.5f, radius, radius, rim)
+    }
+}
+
+/** 재생/일시정지(글자 없음): 유리 원 + 얇은 선 아이콘. */
 class PlayPauseButton(context: Context) : View(context) {
     var playing = false
         set(v) { field = v; contentDescription = if (v) "일시정지" else "재생"; invalidate() }
-    private val p = Paint(Paint.ANTI_ALIAS_FLAG)
+    var glassBehind = false
+        set(v) { field = v; invalidate() }
+    private val p = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeCap = Paint.Cap.ROUND; strokeJoin = Paint.Join.ROUND }
     init { isClickable = true; isFocusable = true; contentDescription = "재생" }
     override fun onDraw(c: Canvas) {
         val s = min(width, height).toFloat()
         val cx = width / 2f; val cy = height / 2f
-        p.color = Color.argb(46, 255, 255, 255); c.drawCircle(cx, cy, s / 2, p)
-        p.color = Color.argb(230, 255, 255, 255)
-        val u = s * 0.18f
+        Glass.draw(c, cx - s / 2, cy - s / 2, cx + s / 2, cy + s / 2, s / 2, glassBehind)
+        p.color = Color.argb(235, 255, 255, 255); p.strokeWidth = (s * 0.022f).coerceAtLeast(1.5f)
+        val u = s * 0.15f
         if (playing) {
-            c.drawRoundRect(RectF(cx - u * 0.9f, cy - u, cx - u * 0.25f, cy + u), 6f, 6f, p)
-            c.drawRoundRect(RectF(cx + u * 0.25f, cy - u, cx + u * 0.9f, cy + u), 6f, 6f, p)
+            c.drawLine(cx - u * 0.45f, cy - u, cx - u * 0.45f, cy + u, p)
+            c.drawLine(cx + u * 0.45f, cy - u, cx + u * 0.45f, cy + u, p)
         } else {
-            val t = Path().apply { moveTo(cx - u * 0.6f, cy - u); lineTo(cx + u, cy); lineTo(cx - u * 0.6f, cy + u); close() }
+            val t = Path().apply { moveTo(cx - u * 0.55f, cy - u); lineTo(cx + u * 0.95f, cy); lineTo(cx - u * 0.55f, cy + u); close() }
             c.drawPath(t, p)
         }
     }
 }
 
 /**
- * 원형 아이콘 버튼. glyph: 'A' = 마음 앨범(재킷에서 반쯤 나온 음반), 'D' = 디버그(점 3개), 'X' = 닫기, '<' = 뒤로.
- * bare = 배경 원 없이 아이콘만(라벨이 붙은 알약 버튼 안에서 쓸 때).
+ * 원형 아이콘 버튼(얇은 선). glyph: 'A' = 마음 앨범(재킷에서 반쯤 나온 음반), 'D' = 디버그(점 3개), 'X' = 닫기, '<' = 뒤로.
+ * bare = 바탕 없이 아이콘만(라벨이 붙은 알약 버튼 안에서 쓸 때).
  */
 class GlyphButton(context: Context, private val glyph: Char, desc: String, private val bare: Boolean = false) : View(context) {
-    private val p = Paint(Paint.ANTI_ALIAS_FLAG).apply { strokeWidth = 4f; strokeCap = Paint.Cap.ROUND }
+    private val p = Paint(Paint.ANTI_ALIAS_FLAG).apply { strokeCap = Paint.Cap.ROUND; strokeJoin = Paint.Join.ROUND }
     init { if (!bare) { isClickable = true; isFocusable = true }; contentDescription = desc }
     override fun onDraw(c: Canvas) {
         val s = min(width, height).toFloat(); val cx = width / 2f; val cy = height / 2f
-        if (!bare) { p.style = Paint.Style.FILL; p.color = Color.argb(40, 255, 255, 255); c.drawCircle(cx, cy, s / 2, p) }
-        p.color = Color.argb(230, 255, 255, 255); p.style = Paint.Style.STROKE
-        p.strokeWidth = s * 0.05f
-        val u = s * (if (bare) 0.34f else 0.2f)
+        if (!bare) Glass.draw(c, cx - s / 2, cy - s / 2, cx + s / 2, cy + s / 2, s / 2, false)
+        p.color = Color.argb(235, 255, 255, 255); p.style = Paint.Style.STROKE
+        p.strokeWidth = (s * 0.028f).coerceAtLeast(1.5f)
+        val u = s * (if (bare) 0.34f else 0.18f)
         when (glyph) {
             'A' -> {
-                // 음반(오른쪽)이 재킷(왼쪽 사각형)에서 반쯤 나온 모양
-                c.drawCircle(cx + u * 0.35f, cy, u * 0.85f, p)
-                p.style = Paint.Style.FILL; c.drawCircle(cx + u * 0.35f, cy, u * 0.18f, p)
-                p.color = Color.argb(255, 0x1B, 0x26, 0x33); c.drawRect(cx - u * 1.05f, cy - u * 0.95f, cx + u * 0.15f, cy + u * 0.95f, p)
-                p.color = Color.argb(230, 255, 255, 255); p.style = Paint.Style.STROKE
-                c.drawRect(cx - u * 1.05f, cy - u * 0.95f, cx + u * 0.15f, cy + u * 0.95f, p)
+                // 음반(오른쪽)이 재킷(왼쪽 사각형)에서 반쯤 나온 모양 — 선만
+                c.drawArc(cx + u * 0.35f - u * 0.85f, cy - u * 0.85f, cx + u * 0.35f + u * 0.85f, cy + u * 0.85f, -70f, 140f, false, p)
+                c.drawCircle(cx + u * 0.35f, cy, u * 0.16f, p)
+                c.drawRoundRect(cx - u * 1.05f, cy - u * 0.95f, cx + u * 0.15f, cy + u * 0.95f, u * 0.08f, u * 0.08f, p)
             }
-            'D' -> { p.style = Paint.Style.FILL; for (k in -1..1) c.drawCircle(cx + k * u, cy, s * 0.04f, p) }
+            'D' -> { p.style = Paint.Style.FILL; for (k in -1..1) c.drawCircle(cx + k * u, cy, s * 0.03f, p) }
             'X' -> { c.drawLine(cx - u, cy - u, cx + u, cy + u, p); c.drawLine(cx + u, cy - u, cx - u, cy + u, p) }
             '<' -> { c.drawLine(cx + u * 0.4f, cy - u, cx - u * 0.6f, cy, p); c.drawLine(cx - u * 0.6f, cy, cx + u * 0.4f, cy + u, p) }
         }
@@ -176,13 +177,22 @@ class BreathView(context: Context, private val onPhase: (inhale: Boolean) -> Uni
 }
 
 /** 앨범 커버(격자·상세·호흡 화면). */
+/** 앨범 커버: API 33+ 는 무드 화면과 같은 빛 셰이더(coverMode), 그 아래는 Canvas. */
 class CoverView(context: Context) : View(context) {
     var spec: CoverSpec? = null
         set(v) { field = v; invalidate() }
+    private val shaderPaint: Paint? = if (android.os.Build.VERSION.SDK_INT >= 33) Paint().apply { shader = app.playdrive.ui.light.LightShader.create() } else null
     override fun onDraw(c: Canvas) {
         val s = spec ?: return
         val side = maxOf(width, height).toFloat()
-        CoverPainter.draw(c, s, (width - side) / 2, (height - side) / 2, side, 1f, s.layers.size, 1f, null)
+        val sp = shaderPaint
+        if (sp != null && android.os.Build.VERSION.SDK_INT >= 33) {
+            val sh = sp.shader as android.graphics.RuntimeShader
+            app.playdrive.ui.light.LightShader.apply(sh, app.playdrive.ui.light.LightParams.cover(s, side))
+            c.save(); c.translate((width - side) / 2, (height - side) / 2)
+            c.drawRect(0f, 0f, side, side, sp)
+            c.restore()
+        } else CoverPainter.draw(c, s, (width - side) / 2, (height - side) / 2, side, 1f, s.layers.size, 1f, null)
     }
 }
 

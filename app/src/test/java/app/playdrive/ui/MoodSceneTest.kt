@@ -84,15 +84,64 @@ class MoodSceneTest {
         assertEquals(1f, end.moodAlpha, 1e-6f)
     }
 
-    @Test fun `장면 도중 다시 출발하면 그 자리에서 멈췄다가 다음 정차에 이어서`() {
+    @Test fun `장면 도중 출발하면 완성된 모습으로 맞춘 뒤 정지 - 정지 프레임이 완성된 한 장`() {
         val sc = MoodScene(startMs = 0, initial = calm)
         sc.setCover(cover(1), 0, immediate = true)
         sc.setCover(cover(2), 1_000)
-        sc.setRestricted(true, 2_000)                         // 장면 1초째에 출발
+        sc.welcome(1_000)
+        sc.setRestricted(true, 2_000)                         // 장면 1초째·웰컴 도중에 출발
         val f = sc.frame(2_000)
-        repeat(100) { k -> assertEquals(f, sc.frame(2_000L + k * 997)) }
-        sc.setRestricted(false, 200_000)
-        assertEquals(f.reveal, sc.frame(200_000).reveal, 1e-6f)
-        assertEquals(1f, sc.frame(204_000).reveal, 1e-6f)
+        assertEquals(2, f.revealFrom); assertEquals(1f, f.reveal, 0f)   // 겹은 다 그려진 모습
+        assertEquals(1f, f.master, 0f)                                  // 빛도 다 피어난 모습
+        assertEquals(1f, f.pulse, 0f)
+        repeat(100) { k -> assertEquals(f, sc.frame(2_000L + k * 997, beatPhase = (k % 10) / 10f)) }
+    }
+
+    @Test fun `웰컴 3초에 피어나고 굿바이 2초에 가라앉는다`() {
+        val sc = MoodScene(startMs = 0, initial = calm)
+        sc.welcome(0)
+        assertEquals(0f, sc.frame(0).master, 1e-6f)
+        val mid = sc.frame(1_500).master
+        assertTrue(mid > 0.3f && mid < 0.7f)
+        assertEquals(1f, sc.frame(3_000).master, 1e-6f)
+        sc.goodbye(10_000)
+        assertEquals(1f, sc.frame(10_000).master, 1e-6f)
+        assertEquals(MoodScene.GOODBYE_LEVEL, sc.frame(12_000).master, 1e-6f)
+        sc.wake(20_000)
+        assertEquals(1f, sc.frame(21_500).master, 1e-6f)
+    }
+
+    @Test fun `박 숨쉬기 - 진폭 3% 안, 박과 박 사이 이어짐, 주행 중엔 1`() {
+        val vals = (0..100).map { MoodScene.pulseShape(it / 100f) }
+        assertTrue(vals.all { it in 1f..1.0301f })
+        assertTrue(vals.max() > 1.02f)                                         // 2~4% 변화
+        assertEquals(MoodScene.pulseShape(0f), MoodScene.pulseShape(1f), 1e-4f) // 박 경계에서 튀지 않음
+        for (k in 1..100) assertTrue("부드러움", kotlin.math.abs(vals[k] - vals[k - 1]) < 0.003f)
+        val sc = MoodScene(startMs = 0, initial = calm)
+        assertTrue(sc.frame(0, beatPhase = 0.3f).pulse > 1.02f)
+        sc.setRestricted(true, 1)
+        assertEquals(1f, sc.frame(5, beatPhase = 0.3f).pulse, 0f)
+    }
+
+    @Test fun `시간대 색온도 - 주행 중엔 보관, 정차하면 6초에 걸쳐`() {
+        val sc = MoodScene(startMs = 0, initial = calm)
+        sc.setDayPart(app.playdrive.album.AlbumNaming.PartOfDay.EVENING, 0, immediate = true)
+        sc.setRestricted(true, 1_000)
+        val f = sc.frame(1_000)
+        sc.setDayPart(app.playdrive.album.AlbumNaming.PartOfDay.NIGHT, 2_000)
+        assertEquals(f, sc.frame(50_000))
+        sc.setRestricted(false, 60_000)
+        val a = sc.frame(63_000)
+        assertEquals(app.playdrive.album.AlbumNaming.PartOfDay.NIGHT, a.dayTo)
+        assertTrue(a.dayMix > 0.2f && a.dayMix < 0.8f)
+        assertEquals(1f, sc.frame(66_000).dayMix, 1e-6f)
+    }
+
+    @Test fun `느린 움직임의 시각은 600초에서 순환해도 이어진다`() {
+        val sc = MoodScene(startMs = 0, initial = calm)
+        val a = sc.frame(599_999).timeSec; val b = sc.frame(600_000).timeSec
+        assertTrue(a > 599.9f && b < 0.01f)
+        // 셰이더의 모든 주기(10초·12초·600초)는 600초를 나눈다
+        for (period in listOf(10f, 12f, 600f)) assertEquals(0f, (600f / period) % 1f, 0f)
     }
 }

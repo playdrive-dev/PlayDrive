@@ -34,7 +34,8 @@ enum class Layer(val level: Float, val pan: Float, val quantize: Quantize) {
 }
 
 /** 급 이벤트에 대한 음악적 반응. 스템 모드 = 효과음 원샷, 신스 모드 = DSP 효과로 대체. */
-enum class Cue { TAPE_STOP, SCRATCH }
+/** CHIME = 웰컴 차임(코드에서 합성, 덕킹 없음). */
+enum class Cue { TAPE_STOP, SCRATCH, CHIME }
 
 /** 스테레오 PCM(Float). 모노 소스는 left와 right가 같은 배열. */
 class StereoPcm(val left: FloatArray, val right: FloatArray) {

@@ -1,41 +1,57 @@
 package app.playdrive.ui
 
 import app.playdrive.album.AlbumNaming
+import app.playdrive.album.AlbumNaming.PartOfDay
 import app.playdrive.album.CoverSpec
 import app.playdrive.album.MoodState
 import kotlin.math.PI
+import kotlin.math.cos
 import kotlin.math.sin
 
-/** 무드 화면 한 프레임(순수 데이터). 길이는 화면 짧은 변(반지름) / 높이(물결) 기준 비율. */
+/** 무드 화면 한 프레임(순수 데이터). 같은 프레임이면 화면도 같다(렌더러는 이것만 본다). */
 data class MoodFrame(
     val background: Int,
-    /** 바깥 → 안쪽 순서의 (반지름 비율, 중심 색 ARGB). 가장자리는 투명으로 번진다. */
+    /** (Canvas 대체 렌더러용) 바깥 → 안쪽 순서의 (반지름 비율, 중심 색 ARGB). */
     val circles: List<Pair<Float, Int>>,
     val tone: Int,
     val waveColor: Int,
     val waveAmp: Float,
     val wavePhase: Float,
     val rain: Boolean,
-    /** 배경에 은은하게 깔리는 오늘의 커버(없으면 null). */
+    /** 오늘의 커버(없으면 null). 셰이더에선 겹마다 깊이가 다른 보조 빛. */
     val cover: CoverSpec?,
-    /** 커버 불투명도(평소 은은하게, 새 겹이 추가되는 장면에서 잠깐 또렷하게). */
     val coverAlpha: Float,
     /** 이 번호부터의 겹이 지금 그려지는 중. */
     val revealFrom: Int,
     /** 새 겹이 그려진 정도 0~1. */
     val reveal: Float,
-    /** 무드 원·물결 불투명도 배수(커버 장면 동안 잠깐 옅게). */
+    /** 무드(메인 빛) 불투명도 배수(커버 장면 동안 잠깐 옅게). */
     val moodAlpha: Float,
+    /** 커버 장면의 밝기 곡선 0~1(장면 밖에서는 0). */
+    val bright: Float = 0f,
+    /** 음악 상태(메인 빛의 크기·색·선명도). */
+    val mood: MoodState = MoodState(0.2f, 0.5f, 0f, false),
+    /** 시간대 색온도: from → to 를 mix 만큼. */
+    val dayFrom: PartOfDay = PartOfDay.NIGHT,
+    val dayTo: PartOfDay = PartOfDay.NIGHT,
+    val dayMix: Float = 1f,
+    /** 전체 빛의 세기: 웰컴(0→1, 3초) · 굿바이(→0.3, 2초) · 깨어남(→1). */
+    val master: Float = 1f,
+    /** 음악 박에 맞춘 메인 빛 밝기 배수(1 ~ 1.03). */
+    val pulse: Float = 1f,
+    /** 장면 시각(초, 0~600 순환). 모든 느린 움직임의 주기(10·12초 등)는 600초를 나눈다 → 순환해도 튀지 않음. */
+    val timeSec: Float = 0f,
 )
 
 /**
  * 무드 화면의 상태 기계(순수 Kotlin, 시간은 밖에서 넣는다). "운전 중엔 귀로, 멈추면 눈으로".
  *
- * Android 차량 앱 품질 기준 SA-1(미디어 앱은 주행 중 움직이는 그래픽 금지, 주차 중만 예외)에 따라:
- *  - restricted(주행 중, requiresDO=true): **장면 시계가 멈춘다** → 색·크기·물결·커버 모두 변화 0.
- *    음악 상태와 커버의 새 겹은 화면에 반영하지 않고 보관([pending], [pendingCover]).
- *  - restricted가 풀리는 순간(정차): 장면 시계가 멈췄던 곳에서 다시 흐르고,
- *    보관한 음악 상태로 3초 전환 + 지난 구간이 커버에 한 겹 추가되는 장면([REVEAL_MS])을 보여준다.
+ * Android 차량 앱 품질 기준 SA-1(미디어 앱은 주행 중 움직이는 그래픽 금지, 주차 중만 예외):
+ *  - restricted(주행 중, requiresDO=true): **장면 시계가 멈춘다** → 빛·색·물결·커버 모두 변화 0.
+ *    멈추는 순간 진행 중이던 전환(음악 전환·커버 장면·웰컴·굿바이·시간대)은 **완성된 모습으로 맞춘 뒤** 멈춘다
+ *    → 정지 프레임이 그 자체로 완성된 한 장. 음악 상태·커버의 새 겹·시간대 변화·박 신호는 반영하지 않고 보관한다.
+ *  - restricted가 풀리는 순간(정차): 시계가 다시 흐르고, 보관한 음악 상태로 3초 전환 + 지난 구간이 커버에 한 겹 추가되는 장면([REVEAL_MS]).
+ *  - 정차·주차 중: 10·12초 주기의 아주 느린 움직임 + 박에 맞춰 메인 빛 밝기 3% 숨쉬기.
  */
 class MoodScene(
     startMs: Long,
@@ -59,19 +75,38 @@ class MoodScene(
     private var revealFrom = 0
     private var revealStart = Long.MIN_VALUE / 2
 
+    private var dayFrom = PartOfDay.NIGHT
+    private var dayTo = PartOfDay.NIGHT
+    private var dayStart = Long.MIN_VALUE / 2
+    var pendingDay: PartOfDay? = null; private set
+
+    private var masterFrom = 1f
+    private var masterTo = 1f
+    private var masterStart = Long.MIN_VALUE / 2
+    private var masterDur = 1L
+
     val restricted: Boolean get() = frozenAt != null
 
-    /** 정차 중에는 계속 다시 그려야 한다(숨 쉬기). 주행 중에는 다시 그릴 필요가 없다. */
+    /** 정차 중에는 계속 다시 그려야 한다(느린 움직임). 주행 중에는 다시 그릴 필요가 없다. */
     val animating: Boolean get() = !restricted
 
     fun setRestricted(r: Boolean, nowMs: Long) {
         if (r == restricted) return
-        if (r) { frozenAt = nowMs; return }
+        if (r) {
+            // 완성된 한 장으로 맞춘 뒤 멈춘다
+            from = to; fadeStart = Long.MIN_VALUE / 2
+            cover?.let { revealFrom = it.layers.size }; revealStart = Long.MIN_VALUE / 2
+            dayFrom = dayTo; dayStart = Long.MIN_VALUE / 2
+            masterFrom = 1f; masterTo = 1f; masterStart = Long.MIN_VALUE / 2
+            frozenAt = nowMs
+            return
+        }
         pausedTotal += nowMs - frozenAt!!
         frozenAt = null
         val t = st(nowMs)
         pending?.let { pending = null; startFade(it, t) }
         pendingCover?.let { pendingCover = null; applyCover(it, t) }
+        pendingDay?.let { pendingDay = null; if (it != dayTo) startDay(it, t) }
     }
 
     /** 새 음악 상태. 주행 중이면 보관만 한다. immediate = 전환 없이 바로(정차 중 디버그·스크린샷용). */
@@ -91,6 +126,32 @@ class MoodScene(
             else -> applyCover(c, st(nowMs))
         }
     }
+
+    /** 시간대(색온도). 정차 중이면 6초에 걸쳐 바뀐다. */
+    fun setDayPart(p: PartOfDay, nowMs: Long, immediate: Boolean = false) {
+        when {
+            restricted -> pendingDay = p
+            immediate -> { dayFrom = p; dayTo = p; dayStart = Long.MIN_VALUE / 2 }
+            p != dayTo -> startDay(p, st(nowMs))
+        }
+    }
+
+    /** 웰컴: 검은 화면에서 3초 동안 빛이 피어남. */
+    fun welcome(nowMs: Long) { if (!restricted) startMaster(0f, 1f, WELCOME_MS, st(nowMs)) }
+
+    /** 굿바이: 2초 동안 빛이 가라앉음(완전히 끄지 않고 0.3까지). */
+    fun goodbye(nowMs: Long) { if (!restricted) { val t = st(nowMs); startMaster(masterAt(t), GOODBYE_LEVEL, GOODBYE_MS, t) } }
+
+    /** 다시 깨어남(굿바이 뒤 무드 화면으로 돌아올 때). */
+    fun wake(nowMs: Long) { if (!restricted) { val t = st(nowMs); if (masterAt(t) < 1f) startMaster(masterAt(t), 1f, 1_500, t) } }
+
+    private fun startMaster(a: Float, b: Float, dur: Long, t: Long) { masterFrom = a; masterTo = b; masterDur = dur; masterStart = t }
+    private fun masterAt(t: Long): Float {
+        val k = ((t - masterStart).toFloat() / masterDur).coerceIn(0f, 1f)
+        return masterFrom + (masterTo - masterFrom) * smooth(k)
+    }
+
+    private fun startDay(p: PartOfDay, t: Long) { dayFrom = dayTo; dayTo = p; dayStart = t }
 
     private fun applyCover(c: CoverSpec, t: Long) {
         val old = cover
@@ -124,7 +185,10 @@ class MoodScene(
         return bright to drawn
     }
 
-    fun frame(nowMs: Long): MoodFrame {
+    /**
+     * beatPhase = 지금 박 안의 위치(0~1, 박 머리 = 0), 음악이 쉬면 null. 주행 중에는 무시한다(1로 고정).
+     */
+    fun frame(nowMs: Long, beatPhase: Float? = null): MoodFrame {
         val t = st(nowMs)
         val s = moodAt(t)
         val phase = breathPhase(nowMs)
@@ -139,6 +203,8 @@ class MoodScene(
         val (bright, drawn) = revealEnvelope(t)
         val c = cover
         val inReveal = c != null && revealFrom < c.layers.size && t >= revealStart && t - revealStart < REVEAL_MS
+        val pulse = if (restricted) 1f else beatPhase?.let { pulseShape(it) } ?: 1f
+        val dayK = ((t - dayStart).toFloat() / DAY_FADE_MS).coerceIn(0f, 1f)
         return MoodFrame(
             bg, circles, tone, withAlpha(tone, 70), amp, phase, s.rain,
             cover = c,
@@ -146,15 +212,35 @@ class MoodScene(
             revealFrom = if (inReveal) revealFrom else (c?.layers?.size ?: 0),
             reveal = if (inReveal) drawn else 1f,
             moodAlpha = 1f - 0.65f * bright,
+            bright = bright,
+            mood = s,
+            dayFrom = dayFrom, dayTo = dayTo, dayMix = smooth(dayK),
+            master = masterAt(t),
+            pulse = pulse,
+            timeSec = ((t - origin).mod(LOOP_MS)).toFloat() / 1000f,
         )
     }
 
     companion object {
         const val BASE_RADIUS = 0.18f
         const val REVEAL_MS = 4_000L
+        const val WELCOME_MS = 3_000L
+        const val GOODBYE_MS = 2_000L
+        const val GOODBYE_LEVEL = 0.3f
+        const val DAY_FADE_MS = 6_000L
+        const val LOOP_MS = 600_000L
         const val COVER_ALPHA = 0.22f
         const val COVER_ALPHA_REVEAL = 0.6f
+        const val PULSE_DEPTH = 0.03f
         private fun lerp(a: Float, b: Float, t: Float) = a + (b - a) * t
+        private fun smooth(k: Float) = k * k * (3 - 2 * k)
         fun withAlpha(c: Int, a: Int) = (a shl 24) or (c and 0x00FFFFFF)
+        /** 박 안 위치 → 밝기 배수. 박 머리에서 0.3박(약 0.2초) 뒤 최고(1 + depth), 박 끝에서 다시 1(박과 박 사이 연속, 튀지 않음). */
+        fun pulseShape(beatPhase: Float): Float {
+            val x = beatPhase.coerceIn(0f, 1f)
+            val rise = if (x < 0.3f) (1 - cos(PI * x / 0.3f).toFloat()) / 2 else 1f
+            val fall = if (x < 0.3f) 1f else (1 + cos(PI * (x - 0.3f) / 0.7f).toFloat()) / 2
+            return 1f + PULSE_DEPTH * rise * fall
+        }
     }
 }

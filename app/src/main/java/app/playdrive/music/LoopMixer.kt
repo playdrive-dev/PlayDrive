@@ -265,13 +265,14 @@ class LoopMixer(
     private fun playCue(cue: Cue) {
         val p = cues[cue]
         if (p == null) { // 효과음이 없으면(신스 모드) DSP 효과로 대체
-            when (cue) { Cue.TAPE_STOP -> startTapeStop(); Cue.SCRATCH -> wobbleStart = gridFrame }
+            when (cue) { Cue.TAPE_STOP -> startTapeStop(); Cue.SCRATCH -> wobbleStart = gridFrame; Cue.CHIME -> {} }
             return
         }
         cueVoice = p
         cuePos = 0
         if (cue == Cue.TAPE_STOP) performance?.silence(gridFrame, timing.nextBoundary(gridFrame + minOf(p.frames, (config.cueMaxMs * sr / 1000).toInt()), timing.barFrames))
         cueEnd = minOf(p.frames, (config.cueMaxMs * sr / 1000).toInt())
+        if (cue == Cue.CHIME) return // 차임은 음악과 함께(덕킹 없음)
         duckTarget = config.duckGain
         // 효과음이 거의 끝나는 시점 이후의 첫 마디 경계에서 음악 복귀
         duckReleaseAt = timing.nextBoundary(gridFrame + cueEnd - cueFadeFrames, timing.barFrames)

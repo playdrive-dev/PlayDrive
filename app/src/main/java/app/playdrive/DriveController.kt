@@ -79,7 +79,8 @@ class DriveController(context: Context, private val listener: Listener) {
         val cueSources = StemConfig.cues.map { (c, id) -> OggCueSource(appContext, c, id) }
         val (pcm, cuePcm) = LayerCache(appContext.cacheDir).loadAll(layerSources, cueSources, timing)
         val perf = PerformanceLayer(timing, StemConfig.chordTimeline, StemConfig.PERF_LEVEL)
-        val m = LoopMixer(timing, pcm, cuePcm, LoopMixer.Config(cueMaxMs = StemConfig.CUE_MAX_MS, levels = StemConfig.levels), perf)
+        val cuesWithChime = cuePcm + (app.playdrive.music.Cue.CHIME to app.playdrive.music.synth.Chime.render(timing.sampleRate))
+        val m = LoopMixer(timing, pcm, cuesWithChime, LoopMixer.Config(cueMaxMs = StemConfig.CUE_MAX_MS, levels = StemConfig.levels), perf)
         mixer = m
         Log.i(TAG, "세트=${StemConfig.SET} ${timing.bars}마디 레이어=${m.availableLayers} 효과음=${m.availableCues}")
         audio = AudioOutput(m, timing.sampleRate).also { it.start() }
@@ -90,14 +91,15 @@ class DriveController(context: Context, private val listener: Listener) {
         main.post { listener.onPrepared(ms) }
     }
 
-    fun start(newSource: VehicleSignalSource) = engineHandler.post {
+    /** autoPlay = false 면 신호원만 붙이고 음악은 [playWithChime]까지 기다린다(웰컴 시퀀스). */
+    fun start(newSource: VehicleSignalSource, autoPlay: Boolean = true) = engineHandler.post {
         source?.stop()
         engine = DrivingEventEngine()
         sketch = CoverSketch { System.currentTimeMillis() }
         director = MusicDirector(timing, mixer?.availableLayers ?: Layer.entries.toSet(), StemConfig.arrangement)
         recent.clear()
         mixer?.let { m -> Layer.entries.forEach { m.submit(MusicCommand.SetLayer(it, false)) } }
-        session?.play()
+        if (autoPlay) session?.play()
         source = newSource
         Log.i(TAG, "신호원 시작: ${newSource.name}")
         newSource.start { sample -> engineHandler.post { process(sample) } }
@@ -121,6 +123,22 @@ class DriveController(context: Context, private val listener: Listener) {
 
     /** 재생/일시정지(무드 화면의 유일한 조작). */
     fun togglePlay() = engineHandler.post { if (playing) session?.pause() else session?.play() }
+
+    /** 웰컴 끝: 첫 다운비트(재생 시작 = 격자 0 또는 멈췄던 곳)에서 차임과 함께 음악 시작. */
+    fun playWithChime() = engineHandler.post {
+        if (playing) return@post
+        mixer?.submit(MusicCommand.PlayCue(app.playdrive.music.Cue.CHIME))
+        session?.play()
+    }
+
+    /** 지금 박 안의 위치(0~1). 음악이 쉬거나 베이스·드럼이 없으면 null. UI 스레드에서 읽어도 된다. */
+    fun beatPhase(): Float? {
+        val m = mixer ?: return null
+        if (!playing) return null
+        val a = m.activeLayers
+        if (Layer.DRUMS !in a && Layer.BASS !in a) return null
+        return (m.gridFrame % timing.beatFrames).toFloat() / timing.beatFrames
+    }
 
     /** '주차 후 1분' 동안 오늘의 곡을 아주 작게(keys+synth 그대로, 마스터만 낮춤). */
     fun setBreathMode(on: Boolean) = engineHandler.post {
