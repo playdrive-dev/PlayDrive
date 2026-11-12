@@ -20,6 +20,9 @@ class AudioOutput(private val mixer: LoopMixer, private val sampleRate: Int) {
     @Volatile var renderLoadPercent = 0f
         private set
 
+    /** 시연 영상용 WAV 저장(디버그 빌드에서만 붙인다). */
+    @Volatile var tap: WavTap? = null
+
     val underruns: Int get() = track?.underrunCount ?: 0
 
     fun start() {
@@ -63,12 +66,13 @@ class AudioOutput(private val mixer: LoopMixer, private val sampleRate: Int) {
         val blockNs = 1_000_000_000L * blockFrames / sampleRate
         var avg = 0f
         while (running) {
-            if (paused) { Thread.sleep(20); continue }
+            if (paused) { Thread.sleep(20); tap?.silence(blockFrames); continue }
             val t0 = System.nanoTime()
             mixer.render(buf, blockFrames)
             avg = avg * 0.95f + 0.05f * (System.nanoTime() - t0) * 100f / blockNs
             renderLoadPercent = avg
             t.write(buf, 0, buf.size, AudioTrack.WRITE_BLOCKING)
+            tap?.write(buf, buf.size)
         }
     }
 

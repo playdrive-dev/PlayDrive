@@ -59,6 +59,7 @@ class MainActivity : ComponentActivity(), DriveController.Listener {
     private lateinit var mood: MoodView
     private lateinit var play: PlayPauseButton
     private lateinit var albumBtn: View
+    private lateinit var demoBtn: View
     private lateinit var debugBtn: GlyphButton
     private var ux: UxRestrictionsWatcher? = null
     private val throttle = MoodThrottle()
@@ -78,6 +79,7 @@ class MainActivity : ComponentActivity(), DriveController.Listener {
     private var prepared = false
     private var pendingIntent: Intent? = null
     private var debugIcon = true
+    private var demoIcon = true
     private var welcomeEndsAt = 0L
     private var dayOverride: AlbumNaming.PartOfDay? = null
 
@@ -92,22 +94,14 @@ class MainActivity : ComponentActivity(), DriveController.Listener {
         play = PlayPauseButton(this).apply { setOnClickListener { controller.togglePlay() }; isEnabled = false; alpha = 0.4f; glassBehind = mood.usesShader }
         root.addView(play, FrameLayout.LayoutParams(dp(112), dp(112), Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL).apply { bottomMargin = dp(40) })
         // 마음 앨범 버튼: 음반 아이콘 + 글자(무슨 버튼인지 바로 보이게), 높이 76dp
-        albumBtn = LinearLayout(this).apply {
-            gravity = Gravity.CENTER_VERTICAL; setPadding(dp(16), 0, dp(28), 0)
-            // 유리: 흐림은 뒤의 셰이더가, 1px 하이라이트 테두리는 여기서
-            background = GradientDrawable().apply {
-                cornerRadius = dp(38).toFloat(); setColor(if (mood.usesShader) 0x0AFFFFFF else 0x22FFFFFF)
-                setStroke(1, 0x55FFFFFF)
-            }
-            isClickable = true; isFocusable = true; contentDescription = getString(R.string.album_title)
-            addView(GlyphButton(this@MainActivity, 'A', getString(R.string.album_title), bare = true), LinearLayout.LayoutParams(dp(52), dp(52)))
-            addView(text(getString(R.string.album_title), BODY_SP).apply { setPadding(dp(10), 0, 0, 0) })
-            setOnClickListener { showAlbum(null) }
-        }
+        albumBtn = glassPill(getString(R.string.album_title), 'A') { showAlbum(null) }
         root.addView(albumBtn, FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(TOUCH_DP), Gravity.TOP or Gravity.END).apply { setMargins(0, dp(20), dp(20), 0) })
+        // 데모 드라이브(릴리스에도 있음 — 실제 차량 신호 없이 심사·시연용으로 74초 주행을 재생). 정차 중에만 보인다.
+        demoBtn = glassPill(getString(R.string.demo_drive), null) { if (prepared && !driving) { dismissOverlay(); showMood(); startDemo() } }.apply { isEnabled = false; alpha = 0.4f }
+        root.addView(demoBtn, FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(TOUCH_DP), Gravity.TOP or Gravity.START).apply { setMargins(dp(20), dp(20), 0, 0) })
         // 개발용(디버그 빌드에서만 보임, 릴리스 빌드엔 없음)
         debugBtn = GlyphButton(this, 'D', "debug").apply { setOnClickListener { showDebug() }; visibility = if (BuildConfig.DEBUG) View.VISIBLE else View.GONE }
-        root.addView(debugBtn, FrameLayout.LayoutParams(dp(TOUCH_DP), dp(TOUCH_DP), Gravity.TOP or Gravity.START).apply { setMargins(dp(20), dp(20), 0, 0) })
+        root.addView(debugBtn, FrameLayout.LayoutParams(dp(TOUCH_DP), dp(TOUCH_DP), Gravity.BOTTOM or Gravity.START).apply { setMargins(dp(20), 0, 0, dp(20)) })
         setContentView(root)
 
         controller = DriveController(this, this)
@@ -118,7 +112,7 @@ class MainActivity : ComponentActivity(), DriveController.Listener {
         root.postDelayed(object : Runnable { override fun run() { if (dayOverride == null) mood.setDayPart(currentDayPart()); root.postDelayed(this, 60_000) } }, 60_000)
         // 유리 패널 위치(버튼이 움직이거나 보이고 숨을 때마다)
         val relayout = View.OnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> updateGlass() }
-        play.addOnLayoutChangeListener(relayout); albumBtn.addOnLayoutChangeListener(relayout)
+        play.addOnLayoutChangeListener(relayout); albumBtn.addOnLayoutChangeListener(relayout); demoBtn.addOnLayoutChangeListener(relayout)
         // 웰컴: 검은 화면 → 3초 동안 빛이 피어남 → (음악 준비가 끝났으면) 첫 다운비트에 차임 + 음악 시작
         mood.welcome()
         welcomeEndsAt = SystemClock.uptimeMillis() + app.playdrive.ui.MoodScene.WELCOME_MS
@@ -140,6 +134,8 @@ class MainActivity : ComponentActivity(), DriveController.Listener {
         controller.albums.all().firstOrNull()?.let { mood.setCover(AlbumNaming.cover(it), immediate = true) }
         ux = UxRestrictionsWatcher(this) { r -> runOnUiThread { uxRestricted = r; applyDrivingPolicy() } }
         pendingIntent = intent
+        // 아이콘 숨김은 웰컴 첫 프레임부터(나머지 명령은 음악 준비가 끝난 뒤 onPrepared에서)
+        debugCommands(intent).filter { it.startsWith("icon:") }.forEach { runDebugCommand(it) }
     }
 
     // ------------------------------------------------------------------ 주행 정책
@@ -153,6 +149,7 @@ class MainActivity : ComponentActivity(), DriveController.Listener {
     private fun updateMoodIcons() {
         val show = !driving && overlay == null
         albumBtn.visibility = if (show) View.VISIBLE else View.GONE
+        demoBtn.visibility = if (show && demoIcon) View.VISIBLE else View.GONE
         debugBtn.visibility = if (BuildConfig.DEBUG && show && debugIcon) View.VISIBLE else View.GONE
         updateGlass()
     }
@@ -166,6 +163,7 @@ class MainActivity : ComponentActivity(), DriveController.Listener {
         }
         add(play, play.width / 2f)
         add(albumBtn, albumBtn.height / 2f)
+        add(demoBtn, demoBtn.height / 2f)
         overlay?.let { add(it, dp(28).toFloat()) }
         mood.glass = list
     }
@@ -176,9 +174,10 @@ class MainActivity : ComponentActivity(), DriveController.Listener {
     override fun onPrepared(elapsedMs: Long) {
         prepared = true
         play.isEnabled = true; play.alpha = 1f
+        demoBtn.isEnabled = true; demoBtn.alpha = 1f
         debugStatus?.text = "준비 완료 (음원 로드 ${elapsedMs}ms)"
         val pi = pendingIntent; pendingIntent = null
-        if (pi?.getStringExtra("debug") != null) handleDebugIntent(pi) else requestSpeedThenStart()
+        if (pi != null && debugCommands(pi).isNotEmpty()) handleDebugIntent(pi) else requestSpeedThenStart()
         // 웰컴이 끝나는 순간(이미 끝났으면 지금) 차임과 함께 음악 시작
         root.postDelayed({ if (SystemClock.uptimeMillis() >= welcomeEndsAt - 50) controller.playWithChime() }, (welcomeEndsAt - SystemClock.uptimeMillis()).coerceAtLeast(0))
     }
@@ -435,17 +434,22 @@ class MainActivity : ComponentActivity(), DriveController.Listener {
     }
 
     /**
-     * 디버그 빌드 전용(테스트·스크린샷·영상):
+     * 디버그 빌드 전용(테스트·스크린샷·영상). 여러 명령은 ';'로 이어서. 릴리스 빌드는 [RELEASE_CMDS](데모 드라이브·예시 앨범·아이콘 숨김)만 받는다:
      *  --es debug demo | real | stop
      *  --es debug screen:mood | screen:drive | screen:park | screen:breath | screen:album | screen:detail[:n] | screen:debug
      *  --es debug seed:albums   (기존 앨범을 모두 지우고 예시 앨범 6장 생성, 기기 안에만)
-     *  --es debug icon:debug:off|on   (무드 화면의 디버그 아이콘 숨김 — 스크린샷용)
+     *  --es debug icon:debug:off|on, icon:demo:off|on   (무드 화면의 디버그·데모 버튼 숨김 — 스크린샷·영상용)
      *  --es debug welcome | goodbye | wake | daypart:MORNING|DAY|EVENING|NIGHT|DAWN|auto | rain:on|off | render:1.0|0.5|canvas
+     *  --es debug rec:audio:on|off   (앱 소리를 files/demo_audio.wav로 — 시연 영상용)
      *  --es debug layers:PAD,BASS,...  /  cue:TAPE_STOP|SCRATCH  /  fx:TapeStop|LowpassDip|PitchWobble
      */
-    private fun handleDebugIntent(intent: Intent) {
-        if (!BuildConfig.DEBUG) return
-        val cmd = intent.getStringExtra("debug") ?: return
+    private fun handleDebugIntent(intent: Intent) = debugCommands(intent).forEach { runDebugCommand(it) }
+
+    /** "a;b;c" 처럼 여러 명령을 한 번에(릴리스 빌드는 [RELEASE_CMDS]만). */
+    private fun debugCommands(intent: Intent): List<String> =
+        intent.getStringExtra("debug")?.split(';')?.map { it.trim() }?.filter { it.isNotEmpty() && (BuildConfig.DEBUG || it in RELEASE_CMDS) }.orEmpty()
+
+    private fun runDebugCommand(cmd: String) {
         Log.i(TAG, "debug intent: $cmd")
         when {
             cmd == "demo" -> { showMood(); startDemo() }
@@ -484,7 +488,19 @@ class MainActivity : ComponentActivity(), DriveController.Listener {
             }
             cmd == "icon:debug:off" -> { debugIcon = false; updateMoodIcons() }   // 스크린샷용
             cmd == "icon:debug:on" -> { debugIcon = true; updateMoodIcons() }
+            cmd == "icon:demo:off" -> { demoIcon = false; updateMoodIcons() }     // 스크린샷용
+            cmd == "icon:demo:on" -> { demoIcon = true; updateMoodIcons() }
             cmd == "seed:albums" -> seedAlbums()
+            cmd == "rec:audio:on" -> { // 시연 영상용: 앱 소리를 WAV로(에뮬레이터 화면 녹화엔 앱 소리가 안 담김) — tools/record_demo.sh
+                val dir = filesDir  // 꺼낼 때: adb exec-out run-as app.playdrive --user <사용자> cat files/demo_audio.wav
+                controller.startAudioTap(java.io.File(dir, "demo_audio.wav"))?.let { Log.i(TAG, "audio tap: $it") }
+            }
+            cmd == "rec:audio:off" -> {
+                val start = controller.stopAudioTap()
+                val dir = filesDir  // 꺼낼 때: adb exec-out run-as app.playdrive --user <사용자> cat files/demo_audio.wav
+                java.io.File(dir, "demo_audio.txt").writeText("startEpochMs=$start\n")
+                Log.i(TAG, "audio tap done: startEpochMs=$start")
+            }
             cmd.startsWith("layers:") -> {
                 val want = cmd.removePrefix("layers:").split(",").mapNotNull { n -> Layer.entries.find { it.name == n.trim() } }.toSet()
                 Layer.entries.forEach { controller.debugCommand(MusicCommand.SetLayer(it, it in want)) }
@@ -543,6 +559,19 @@ class MainActivity : ComponentActivity(), DriveController.Listener {
         if (bold) letterSpacing = 0.04f
     }
 
+    /** 무드 화면 위 유리 버튼(높이 76dp): 아이콘(선택) + 글자. 흐림은 뒤의 셰이더가, 1px 하이라이트 테두리는 여기서. */
+    private fun glassPill(label: String, glyph: Char?, onClick: () -> Unit) = LinearLayout(this).apply {
+        gravity = Gravity.CENTER_VERTICAL; setPadding(dp(if (glyph != null) 16 else 28), 0, dp(28), 0)
+        background = GradientDrawable().apply {
+            cornerRadius = dp(38).toFloat(); setColor(if (mood.usesShader) 0x0AFFFFFF else 0x22FFFFFF)
+            setStroke(1, 0x55FFFFFF)
+        }
+        isClickable = true; isFocusable = true; contentDescription = label
+        if (glyph != null) addView(GlyphButton(this@MainActivity, glyph, label, bare = true), LinearLayout.LayoutParams(dp(52), dp(52)))
+        addView(text(label, BODY_SP).apply { if (glyph != null) setPadding(dp(10), 0, 0, 0) })
+        setOnClickListener { onClick() }
+    }
+
     private fun button(label: String, primary: Boolean, size: Float = BODY_SP, onClick: () -> Unit) = Button(this).apply {
         text = label; textSize = size; isAllCaps = false; typeface = FONT_TITLE; letterSpacing = 0.02f; minHeight = dp(TOUCH_DP); minimumHeight = dp(TOUCH_DP); minWidth = dp(120)
         setTextColor(if (primary) 0xFF0F151D.toInt() else Color.WHITE)
@@ -554,6 +583,8 @@ class MainActivity : ComponentActivity(), DriveController.Listener {
 
     companion object {
         private const val TAG = "PlayDrive.UI"
+        /** 릴리스 빌드에서도 받는 인텐트 명령(심사·시연용). */
+        private val RELEASE_CMDS = setOf("demo", "seed:albums", "icon:demo:off", "icon:demo:on")
         private const val PERM_SPEED = "android.car.permission.CAR_SPEED"
         private const val MATCH = ViewGroup.LayoutParams.MATCH_PARENT
         /** 무드 셰이더 해상도 배율(1 = 원래, 0.5 = 절반으로 그린 뒤 확대). 측정 결과로 정함(docs/dev-notes.md). */

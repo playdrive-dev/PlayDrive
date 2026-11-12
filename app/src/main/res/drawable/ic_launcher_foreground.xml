@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 원본: docs/icon/playdrive_icon.svg (청록 메인 빛 + 바닥의 가는 빛 띠 두 줄, 글자 없음) -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="108dp" android:height="108dp"
+    android:viewportWidth="108" android:viewportHeight="108">
+    <path android:pathData="M27,47a27,27 0,1 0,54 0a27,27 0,1 0,-54 0z">
+        <aapt:attr name="android:fillColor">
+            <gradient android:type="radial" android:centerX="54" android:centerY="47" android:gradientRadius="27">
+                <item android:offset="0" android:color="#FFEAFFF9" />
+                <item android:offset="0.18" android:color="#FFB4EBE0" />
+                <item android:offset="0.42" android:color="#996CC3B5" />
+                <item android:offset="0.7" android:color="#2E6CC3B5" />
+                <item android:offset="1" android:color="#006CC3B5" />
+            </gradient>
+        </aapt:attr>
+    </path>
+    <path android:pathData="M28,68.5Q54,66.5 80,68.5" android:strokeWidth="2.2" android:strokeLineCap="round">
+        <aapt:attr name="android:strokeColor">
+            <gradient android:type="linear" android:startX="28" android:startY="0" android:endX="80" android:endY="0">
+                <item android:offset="0" android:color="#008FD3C6" />
+                <item android:offset="0.5" android:color="#FFD6F6EF" />
+                <item android:offset="1" android:color="#008FD3C6" />
+            </gradient>
+        </aapt:attr>
+    </path>
+    <path android:pathData="M34,74Q54,72.6 74,74" android:strokeWidth="1.4" android:strokeLineCap="round">
+        <aapt:attr name="android:strokeColor">
+            <gradient android:type="linear" android:startX="34" android:startY="0" android:endX="74" android:endY="0">
+                <item android:offset="0" android:color="#006CC3B5" />
+                <item android:offset="0.5" android:color="#B38FD3C6" />
+                <item android:offset="1" android:color="#006CC3B5" />
+            </gradient>
+        </aapt:attr>
+    </path>
+</vector>

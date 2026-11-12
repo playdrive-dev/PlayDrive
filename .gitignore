@@ -34,3 +34,6 @@ assets-src/
 # Python
 __pycache__/
 *.pyc
+
+# 시연 영상 녹화 결과(tools/record_demo.sh)
+demo_out/

@@ -1,93 +1,171 @@
 # PlayDrive
 
-**평소처럼 안전하게 운전하면, 그 운전이 실시간으로 한 곡의 음악이 되는 차량용 사운드 앱.**
-페달·핸들·방향지시등이 악기가 되고, 부드럽게 운전할수록 연주가 완성됩니다. 급가속·급제동은 음악을 흐트러뜨리고, 다시 부드럽게 달리면 한 마디씩 회복합니다.
+<img src="docs/icon/playdrive_icon.svg" width="96" align="right" alt="PlayDrive 아이콘">
 
-- 플랫폼: Pleos Connect (Android Automotive OS, API 34)
-- 카테고리: Music/Audio
+**평소처럼 안전하게 운전하면, 그 운전이 실시간으로 한 곡의 음악이 되는 차량용 사운드 앱.**
+
+페달·핸들·방향지시등이 악기가 되고, 부드럽게 운전할수록 연주가 완성됩니다. 급가속·급제동을 하면 음악이 흐트러지고, 다시 부드럽게 달리면 한 마디씩 돌아옵니다. 운전 반응 음악은 대개 가속에 보상하지만, PlayDrive는 **안전에 보상**합니다.
+
+- 플랫폼: Pleos Connect (Android Automotive OS, API 34) · 카테고리: Music/Audio
+- APK: [`apk/PlayDrive_v1.0_release.apk`](apk/PlayDrive_v1.0_release.apk)
+
+## 데모 영상
+
+> 준비 중입니다(링크 추가 예정).
+
+## 핵심 장면
+
+| 웰컴: 검은 화면에서 3초 동안 빛이 피어남 | 정차 중(아침 · 비): 빛이 박자에 맞춰 천천히 숨 쉼 | 주행 중: 화면이 완전히 멈춤(SA-1) |
+|---|---|---|
+| ![](docs/screens/v3/01_welcome_b_bloom.jpg) | ![](docs/screens/v3/morning_03_parked_rain.jpg) | ![](docs/screens/v3/night_04_driving_frozen.jpg) |
+| **정차하는 순간: 지난 구간이 빛 한 겹으로** | **주차 후: 운전자 혼자일 때만 1분 숨 고르기 제안** | **마음 앨범: 주행 1번 = 앨범 1장** |
+| ![](docs/screens/v3/night_05_stop_reveal.jpg) | ![](docs/screens/v3/sunset_08_park_card.jpg) | ![](docs/screens/v3/20_album_grid.jpg) |
+
+앱 창 영역입니다. 차량 화면 전체(Pleos Connect v2.1.0, 2560×1440)는 `docs/screens/v3/*_full.jpg`에 있습니다.
+
+## 어떻게 동작하나
+
+운전은 음을 **만들지 않고, 고르고 섞기만** 합니다(수직 레이어링 방식의 적응형 음악). 모든 스템은 같은 BPM(90)·조성·코드 진행·마디 길이를 씁니다. 레이어를 켜고 끄는 시점은 다음 박·마디 경계에 맞추기 때문에, 어떤 조합으로 켜져도 불협화음이 나지 않습니다.
+
+| 운전 행동 | 사용하는 신호 | 음악 반응 |
+|---|---|---|
+| 출발 | 기어 D, 속도 증가 | 다음 다운비트에 드럼·베이스가 함께 들어옴(드롭) |
+| 부드러운 가속 | 속도 변화율, 브레이크 | 드럼·퍼커션 추가, 코드톤 아르페지오 |
+| 정속 유지 | 속도 | 베이스 → (오래 부드러우면) 멜로디까지 한 겹씩 추가 |
+| 부드러운 제동 | 브레이크 페달, 감속도 | 다음 8분음표에 근음+5도 |
+| 방향지시등 | TurnSignal | 8분음표 셰이커가 박에 맞춰 합류 |
+| 급가속·급제동 | 속도 변화율(약 0.3g) | 테이프스톱·로우패스 효과 후 레이어가 줄어듦 → 부드럽게 달리면 한 마디씩 회복 |
+| 급조향 | 조향각 | 멜로디 피치가 잠깐 흔들림 |
+| 비 | 와이퍼 | 음악 전체가 젖은 듯 로우패스 + 리버브 |
+| 신호 대기 | 속도 0이 2초 이상 | 브레이크다운(드럼·퍼커션 빠짐) |
+| 주차 | 기어 P, 착좌 | 패드만 남음 → 운전자 혼자면 1분 호흡 제안 |
+
+화면에도 같은 원칙을 적용했습니다. **운전 중에는 귀로 듣고, 멈추면 눈으로 봅니다.**
+- 주행하는 동안 앱은 오늘의 앨범 커버를 그려 두기만 하고 화면에는 반영하지 않습니다. 정차하는 순간 지난 구간이 빛 한 겹으로 더해집니다.
+- 커버는 그날 운전으로 그려집니다. 시간대가 바탕색을 정하고, 정차 횟수가 빛의 개수(1~5)를, 부드러움이 빛의 크기와 선명도를 정합니다.
+- 비가 온 구간은 커버에 물방울로, 급가속·급제동은 물결이 흐트러진 자국으로 남습니다.
+- 주차하면 그 커버가 그대로 마음 앨범의 새 앨범이 됩니다.
+
+## 안전 설계
+
+- **주행 중 그래픽 완전 정지(Android 차량 앱 품질 기준 SA-1).**
+  - `CarUxRestrictions`가 `requiresDistractionOptimization`을 요구하는 동안 무드 화면은 다시 그리지도 않습니다. 색·크기·물결이 전혀 변하지 않습니다.
+  - 음악 상태가 바뀌어도 보관만 했다가, 정차해서 제한이 풀리는 순간 한 번에 반영합니다.
+  - 단위 테스트 `MoodSceneTest`가 "DO 중 프레임 변화 없음"을 지킵니다.
+- **주행 중 화면에는 단색 무드와 재생/일시정지만 있습니다.** 숫자·점수·글자·알림·자동 스크롤이 없습니다. 마음 앨범, 회고 입력, 1분 호흡, 데모 버튼은 정차 중에만 보이고, 출발하면 바로 닫힙니다.
+- **Distraction Optimization 선언**(`distractionOptimized=true`). 차량 화면 기준에 맞춰 터치 영역은 76dp 이상, 본문은 24sp, 제목은 32sp 이상입니다.
+- **오디오 정책.**
+  - MediaSession과 오디오 포커스를 씁니다.
+  - 내비 음성 안내가 나올 때는 시스템이 덕킹합니다.
+  - 다른 앱이 포커스를 가져가면 일시정지합니다.
+- **표현 원칙.**
+  - '게임'처럼 보이는 UI와 용어(점수, 콤보, 순위)를 쓰지 않습니다. 문구는 "연주", "트랙", "하모니"만 씁니다.
+  - 호흡 기능은 웰니스 표현("숨 고르기")만 쓰고, 의료 표현(측정·치료)은 쓰지 않습니다.
+- **개인정보.**
+  - 위치를 저장하지 않습니다.
+  - 주행 기록(앨범)은 기기 안에만 저장하며, 서버와 계정이 없습니다.
+  - 오디오는 녹음하지 않습니다. 앨범에는 주행 요약과 커버 정보만 저장합니다.
+- **신호가 없을 때.** Capability가 없거나 신호를 읽지 못하면 그 신호의 반응만 끄고, 앱은 계속 동작합니다.
+
+## 사용한 Pleos SDK와 권한
+
+- Pleos Vehicle SDK `ai.pleos.playground:Vehicle:2.3.2`(Vehicle State, 읽기 전용)와 AAOS `CarPropertyManager`를 씁니다.
+- 신청이 필요한 SDK(TTS, STT, FusedLocation, Vehicle Control)는 쓰지 않습니다.
+
+| 신호 | API | 권한 |
+|---|---|---|
+| 차량 속도 | `CarPropertyManager` `PERF_VEHICLE_SPEED` | `android.car.permission.CAR_SPEED` |
+| 기어 | `CarPropertyManager` `GEAR_SELECTION` | `android.car.permission.CAR_POWERTRAIN` |
+| 브레이크 페달 | Vehicle `getBrake()` | `pleos.car.permission.CAR_DRIVE` |
+| 조향각 | Vehicle `getSteeringWheel()` | `pleos.car.permission.CAR_DRIVE` |
+| 방향지시등 | Vehicle `getTurnSignal()` | `pleos.car.permission.CAR_LIGHTS` |
+| 와이퍼 | Vehicle `getWiper()` | `pleos.car.permission.CAR_WINDOWS` |
+| 좌석 착좌 | Vehicle `getSeat()` | `pleos.car.permission.CAR_SEATS` |
+
+실제로 쓰는 API의 최소 권한만 선언했고, 모두 읽기 전용입니다.
 
 ## 실행 방법
 
-1. Android Studio(2025 이상), JDK 17, Android SDK Platform 35를 설치합니다.
-2. Pleos Connect 에뮬레이터를 준비합니다.
-   - SDK Manager > SDK Update Sites에 `https://nexus-playground.pleos.ai/repository/raw-releases/connect-avd/2.x/crp-arm64-sys-img.xml`을 추가합니다.
-   - API 34 *Pleos Connect v2.1.0* system image를 설치한 뒤 Automotive AVD를 만듭니다(RAM 4GB, Cold boot).
-   - 실행: `emulator -avd <AVD 이름> -no-snapshot-load -gpu host -timezone Asia/Seoul` (에뮬레이터 37.1 기준. Mac GPU로 그려 정차 중 30fps).
-     예전 에뮬레이터에서 `-gpu host`가 부팅 직후 멈추면 `-gpu swiftshader_indirect`(소프트웨어, 약 5fps)로 실행하세요.
-   - 시연 영상 녹화: `adb emu screenrecord start --time-limit 120 --fps 30 out.webm` (2560×1440, 30fps) → `adb emu screenrecord stop`.
-3. 빌드·설치:
+### 1. 에뮬레이터
+
+1. Android Studio SDK Manager > SDK Update Sites에 `https://nexus-playground.pleos.ai/repository/raw-releases/connect-avd/2.x/crp-arm64-sys-img.xml`을 추가합니다.
+2. API 34 **Pleos Connect v2.1.0** system image를 설치합니다.
+3. Automotive AVD를 만듭니다. 하드웨어 프로필은 Pleos Connect v2.1.0(2560×1440, 160dpi), RAM 4GB, Cold boot입니다.
+4. 에뮬레이터를 실행합니다.
    ```bash
-   ./gradlew assembleDebug
-   adb install -r app/build/outputs/apk/debug/app-debug.apk
+   emulator -avd <AVD 이름> -no-snapshot-load -gpu host -timezone Asia/Seoul
    ```
-4. 앱을 실행하면 음원을 불러온 뒤(첫 실행 약 2초) 버튼이 활성화됩니다.
-   - **데모 드라이브(74초)**: 출발 드롭 → 부드러운 가속(아르페지오) → 정속 → 방향지시등(셰이커)·차선 변경 → 부드러운 제동(근음+5도) → 신호 대기 브레이크다운 → 재출발 드롭 → 비 → 급제동(테이프스톱) → 회복 → 정차 → 주차 순서로 차량 신호를 주입해 음악 반응을 보여줍니다.
-   - **실제 차량 신호**: 차량(또는 에뮬레이터 Virtual Console)의 속도·기어·브레이크·방향지시등·와이퍼·조향·착좌 신호로 연주합니다. 속도 권한(`android.car.permission.CAR_SPEED`)을 허용해야 합니다.
+   `-gpu host`를 쓰면 Mac GPU로 그려서 정차 중 화면이 30fps로 움직입니다(에뮬레이터 37.1 기준). 예전 에뮬레이터에서 부팅 직후 멈추면 `-gpu swiftshader_indirect`로 실행하세요.
 
-## 화면 v3 — 다듬은 빛
+테스트 환경: Pleos Connect v2.1.0(API 34, arm64), 차량 서비스 2.3.22, 에뮬레이터 37.1.11, Apple M2.
 
-빗방울은 대부분 투명한 작은 렌즈(뒤 장면이 뒤집혀 비침, 빛 쪽에만 반짝임, 3~5개는 흘러내린 자국), 노을은 남보라→앰버를 OKLCh로 보간, 아침은 오른쪽 위 금빛 햇빛, 제안 카드는 버튼과 같은 유리. 테이프스톱 흔적은 앨범 커버에만(물결이 한 번 부드럽게 흩어진 모양).
-앨범 커버 규칙: 시간대 = 바탕색, 정차 횟수 = 빛의 개수(1~5), 부드러움 = 빛의 크기·선명도, 주행 시간 = 빛의 퍼짐, 비 = 물방울, 테이프스톱 = 물결 흩어짐, 주행 ID로 고정.
+### 2. APK 설치
 
-| 아침 · 정차 · 비 | 노을 · 정차 | 밤 · 주행 중(정지 프레임) | 제안 카드(유리) |
-|---|---|---|---|
-| ![](docs/screens/v3/morning_03_parked_rain.jpg) | ![](docs/screens/v3/sunset_02_parked.jpg) | ![](docs/screens/v3/night_04_driving_frozen.jpg) | ![](docs/screens/v3/sunset_08_park_card.jpg) |
-| **정차: 지난 구간이 한 겹(빛)으로** | **노을 · 비** | **마음 앨범(6장 예시)** | **앨범 상세** |
-| ![](docs/screens/v3/night_05_stop_reveal.jpg) | ![](docs/screens/v3/sunset_03_parked_rain.jpg) | ![](docs/screens/v3/20_album_grid.jpg) | ![](docs/screens/v3/21_album_detail.jpg) |
+```bash
+adb install -r apk/PlayDrive_v1.0_release.apk
+```
 
-전체 목록은 `docs/screens/v3/`(v2와 같은 구성, `*_full.jpg` = 차량 화면 전체 2560×1440).
+앱 목록에서 **PlayDrive**를 실행합니다.
+- 처음 실행하면 차량 속도 권한 창이 뜹니다. AAOS에서는 "위치 정보" 권한으로 표시됩니다.
+  - **허용**을 누르면 실제 차량(또는 Virtual Console)의 속도에 반응합니다.
+  - 허용하지 않아도 데모 드라이브는 동작합니다.
+- 음원을 불러오는 데 첫 실행 기준 약 2초가 걸립니다. 그동안 검은 화면에서 빛이 피어나고, 차임과 함께 음악이 시작됩니다.
 
-## 화면 v2 — 빛을 재료로 쓰는 화면
+### 3. 데모 드라이브(74초)
 
-무드 화면과 마음 앨범 커버를 **AGSL 셰이더(API 33+, Compose)** 한 벌로 그립니다. 시간대 색온도 배경 + 부드러운 메인 빛(박에 맞춰 3%만 숨쉬기) + 깊이가 다른 보조 빛(오늘 커버의 겹) + 바닥에 반사된 듯한 가는 빛 띠 + 앞유리 물방울(비) + 미세 필름 그레인. 주행 중에는 완성된 한 장으로 멈춥니다. API 33 미만은 Canvas 버전으로 그립니다.
+실제 차량 신호 없이 앱의 반응을 처음부터 끝까지 볼 수 있습니다.
 
-| 웰컴(검은 화면 → 3초 동안 피어남) | 아침 · 정차 | 노을 · 정차 · 비 | 밤 · 주행 중(정지 프레임) |
-|---|---|---|---|
-| ![](docs/screens/v2/01_welcome_b_bloom.jpg) | ![](docs/screens/v2/morning_02_parked.jpg) | ![](docs/screens/v2/sunset_03_parked_rain.jpg) | ![](docs/screens/v2/night_04_driving_frozen.jpg) |
-| **정차: 지난 구간이 한 겹(빛)으로** | **마지막 정차** | **굿바이(2초 동안 가라앉음)** | **마음 앨범(같은 셰이더 커버)** |
-| ![](docs/screens/v2/night_05_stop_reveal.jpg) | ![](docs/screens/v2/sunset_06_last_stop.jpg) | ![](docs/screens/v2/night_07_goodbye.jpg) | ![](docs/screens/v2/20_album_grid.jpg) |
+- **방법 1(화면)**: 무드 화면 왼쪽 위의 **데모 드라이브** 버튼을 누릅니다. 정차 중에만 보입니다.
+- **방법 2(adb)**:
+  ```bash
+  adb shell am start -n app.playdrive/.MainActivity --es debug demo
+  ```
 
-전체 목록은 `docs/screens/v2/`(아침·노을·밤 × 정차/비/주행 중/정차 장면/마지막 정차/굿바이/제안 카드, `*_full.jpg` = 차량 화면 전체 2560×1440).
+데모는 다음 순서로 차량 신호를 주입합니다.
+1. 출발(드롭) → 부드러운 가속(아르페지오) → 정속
+2. 방향지시등(셰이커) + 차선 변경 → 부드러운 제동(근음+5도)
+3. 신호 대기(브레이크다운) → 재출발
+4. 비 → 급제동(테이프스톱) → 회복
+5. 정차 → 주차
 
-## 화면 v1(Canvas)
+데모가 끝나면 굿바이(빛이 가라앉음), 1분 숨 고르기 제안, 마음 앨범이 이어집니다. 주행 구간에서는 화면이 멈춰 있고, 정차할 때마다 커버에 빛이 한 겹 더해집니다.
 
-| 무드(정차, 오늘 커버가 은은하게) | 무드(주행 중 — 완전 정지) | 주차 후 1분 제안 | 1분 호흡 |
-|---|---|---|---|
-| ![](docs/screens/01_mood_parked.png) | ![](docs/screens/02_mood_driving.png) | ![](docs/screens/03_park_offer.png) | ![](docs/screens/04_breath.png) |
-| **마음 앨범(새 앨범 강조)** | **앨범 상세(회고 있음)** | **앨범 상세(회고 입력)** | **같은 날 두 번째 주행** |
-| ![](docs/screens/05_album_grid.png) | ![](docs/screens/06_album_detail.png) | ![](docs/screens/07_album_detail_input.png) | ![](docs/screens/08_album_second_trip.png) |
-| **정차 직전(주행 중 정지 화면)** | **정차 순간: 지난 구간이 커버에 한 겹** | **정차 3초 뒤** | **마지막 정차: 빗줄기·흐트러진 물결 자국** |
-| ![](docs/screens/09_stop_before.png) | ![](docs/screens/10_stop_reveal.png) | ![](docs/screens/11_stop_after.png) | ![](docs/screens/12_last_stop_reveal.png) |
+예시 앨범 6장(시간대·날씨·정차 횟수가 서로 다름)을 보려면 아래 명령을 씁니다. 기존 앨범은 지워집니다.
+```bash
+adb shell am start -n app.playdrive/.MainActivity --es debug seed:albums
+```
 
-앱 창 영역(1682×1210dp)만 자른 이미지입니다. 차량 화면 전체(Pleos Connect v2.1.0 프로필 2560×1440)는 같은 이름의 `*_full.png`를 보세요.
+### 4. 실제 차량 신호(Virtual Console)
 
-- 주행 중(CarUxRestrictions `requiresDistractionOptimization`)에는 단색 배경과 추상 그래픽, 재생/일시정지 버튼만 보이고 **그래픽이 완전히 멈춥니다**(Android 차량 앱 품질 기준 SA-1). 음악 상태 변화는 정차하는 순간 한 번에 반영됩니다.
-- 웰컴: 앱을 켜면 검은 화면에서 3초 동안 빛이 피어나고, 첫 다운비트에 부드러운 차임(코드에서 합성한 A·C·E 종소리)과 함께 음악이 시작됩니다. 주차 후에는 2초 동안 빛이 가라앉은 뒤 "1분 숨 고르기"를 제안합니다.
-- "운전 중엔 귀로, 멈추면 눈으로": 주행하며 오늘의 앨범 커버를 계속 그려 두고(화면엔 반영 안 함), 정차하는 순간 지난 구간이 커버에 한 겹 추가되는 장면을 보여줍니다. 부드럽게 달린 구간은 둥근 원이 크게, 비 온 구간은 빗줄기, 급가속·급제동(테이프스톱)은 물결이 흐트러진 자국. 주차하면 그 커버가 그대로 마음 앨범의 새 앨범이 됩니다.
-- 주차(P단) 후 운전석에만 사람이 있을 때 "1분 숨 고르기"를 제안합니다. 동승자가 있으면 제안하지 않습니다.
-- 마음 앨범: 주행 한 번이 앨범 한 장이 됩니다. 정사각 커버 격자에 제목 한 줄, 커버를 누르면 큰 커버·날짜·회고 한 줄을 봅니다. 커버는 그날 운전의 부드러움·비·시간대로 그린 추상 그래픽이고, 회고 한 줄은 정차 중에만 남길 수 있습니다. 같은 날 같은 시간대 제목이 겹치면 "…빗속의 두 번째 길"처럼 구분합니다. 기록은 기기 안에만 저장합니다.
-- 차량 화면 기준: 터치 영역 76dp 이상, 본문 24sp·제목 32sp 이상.
+```bash
+adb forward tcp:8088 tcp:8088   # 그다음 브라우저에서 http://127.0.0.1:8088/
+```
+Virtual Console에서 속도·기어·브레이크·방향지시등·와이퍼·조향·착좌를 바꾸면 그대로 연주에 반영됩니다.
 
-## 테스트 환경 및 필요한 설정
+### 소스에서 빌드
 
-- 에뮬레이터: Pleos Connect v2.1.0 (API 34, arm64), 차량 서비스 2.3.22. AVD 하드웨어 프로필은 공식 가이드대로 **Pleos Connect v2.1.0**(2560×1440, 160dpi), RAM 4GB, Cold boot
-- Virtual Console: `adb forward tcp:8088 tcp:8088` 후 `http://127.0.0.1:8088/`에서 속도·기어·브레이크·방향지시등·와이퍼·조향·착좌를 조작
-- 사용 SDK: Pleos Vehicle SDK `ai.pleos.playground:Vehicle:2.3.2`(Vehicle State, 읽기 전용), AAOS `CarPropertyManager`
-- 사용 권한(읽기 전용): `android.car.permission.CAR_SPEED`, `android.car.permission.CAR_POWERTRAIN`, `pleos.car.permission.CAR_DRIVE`, `CAR_LIGHTS`, `CAR_WINDOWS`, `CAR_SEATS`
-- 단위 테스트: `./gradlew :app:testDebugUnitTest`
-- 디버그 빌드 화면 바로 열기: `adb shell am start -n app.playdrive/.MainActivity --es debug <명령>`
-  - `demo`(74초 데모 드라이브), `screen:mood`, `screen:drive`(주행 중 모습), `screen:park`(주차 후 1분 제안), `screen:breath`, `screen:album`, `seed:albums`(데모 앨범을 모두 지우고 예시 앨범 6장)
+JDK 17과 Android SDK Platform 35가 필요합니다.
+```bash
+./gradlew :app:testDebugUnitTest   # 단위 테스트
+./gradlew assembleDebug            # 디버그 빌드(개발용 패널·화면 바로 열기 명령 포함)
+```
 
-## APK
+- release 빌드는 저장소 밖의 서명 키(`~/.playdrive/keystore.properties`)가 있을 때만 서명됩니다.
+- 개발 기록, 측정값, 버전별 화면은 [`docs/dev-notes.md`](docs/dev-notes.md)에 있습니다.
 
-- 위치: `apk/` 폴더(제출용 release 빌드 예정). 용량이 크면 GitHub Releases에 올립니다.
+## 음원 출처
 
-## 음원
+- **Suno 유료 플랜(Pro)으로 생성**했으며, 상업적 이용이 가능합니다.
+- 기본 음원은 Suno로 만든 90 BPM 로파이 곡 한 곡입니다.
+  - 악기별 스템(drums, bass, keys, guitar, synth, perc)으로 분리했습니다.
+  - 모든 스템을 같은 8마디 구간으로 잘라 `app/src/main/res/raw/song_*.ogg`로 넣었습니다.
+- 보조 음원 `lofi_*.ogg`는 스템별 4마디 루프와 효과음(테이프스톱, 스크래치) 원샷입니다.
+- 반응형 연주음(로즈풍 FM 음, 셰이커)과 웰컴 차임은 앱 안에서 코드로 합성합니다. 외부 음원은 쓰지 않습니다.
+- 분석·가공 스크립트는 `tools/analyze_song.py`, `tools/process_stems.py`, `tools/find_tapestop.py`입니다. 원본 WAV는 저장소에 포함하지 않습니다.
 
-- 음원: Suno 유료 플랜(Pro)으로 생성, 상업적 이용 가능.
-- 기본 음원(SONG): Suno로 만든 90 BPM 로파이 곡 한 곡을 악기별 스템(drums, bass, keys, guitar, synth, perc)으로 분리한 뒤, 모든 스템을 같은 8마디 구간으로 잘라 `app/src/main/res/raw/song_*.ogg`(OGG Vorbis)로 넣었습니다.
-- 보조 음원(LOOPS): 스템별로 따로 생성한 4마디 루프 `lofi_*.ogg`, 효과음(테이프 스톱, 스크래치) 원샷.
-- 사용할 세트는 `app/src/main/java/app/playdrive/music/stems/StemConfig.kt`에서 고릅니다(SONG / LOOPS / SYNTH).
-- 분석·가공 스크립트: `tools/analyze_song.py`, `tools/process_stems.py`, `tools/find_tapestop.py`
-- 원본 WAV는 저장소에 포함하지 않습니다.
-- 반응형 연주 레이어(로즈풍 FM 음, 셰이커)는 앱 안에서 코드로 합성합니다(외부 음원 없음).
+## 라이선스
+
+- 소스 코드와 음원: 공모전 심사를 위해 공개합니다. 별도 표기 전까지 모든 권리를 보유합니다(All rights reserved).
+- 사용한 라이브러리:
+  - AndroidX와 Jetpack Compose(Apache License 2.0)
+  - Pleos Vehicle SDK(Pleos Playground 이용 약관)

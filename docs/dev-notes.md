@@ -642,3 +642,78 @@ Mac M2, 에뮬레이터 37.1.11, AVD Pleos Connect v2.1.0(2560×1440, 160dpi), �
 ### 테스트: 전체 **74/74 통과**
 - 추가: 노을 OKLCh 중간 채도, 아침에만 햇빛, 무드 화면엔 흔적 없음·커버에만, 정차 횟수 = 빛 개수(1~5), 같은 ID = 같은 커버·다른 ID = 다른 배치, 짧은 주행 모임·긴 주행 퍼짐(1.8배 이상), 6번째 정차부터 합침.
 - 주행 중 uniform 불변(300회) 그대로 통과.
+
+
+## 2026-11-12 — 제출 준비(기능 추가 중단, 버그 수정만)
+
+### 1. 앱 아이콘(adaptive icon)
+- 원본 `docs/icon/playdrive_icon.svg`(108×108 캔버스, 안전 영역 지름 66). 배경 = 밤 팔레트 남색 그라데이션(#22305A → #121A33 → #070A16), 전경 = 청록 메인 빛(방사형, #EAFFF9 → #6CC3B5 투명) + 바닥 빛 띠 두 줄. 글자 없음.
+- 리소스: `drawable/ic_launcher_background.xml`·`ic_launcher_foreground.xml`(VectorDrawable, aapt 인라인 그라데이션), `ic_launcher_monochrome.xml`(테마 아이콘), `mipmap-anydpi-v26/ic_launcher(_round).xml`. 매니페스트 `android:icon`/`roundIcon`.
+- 확인: 앱 목록 `docs/icon/launcher_apps_full.jpg`, 독(실행 중) `docs/icon/launcher_dock_full.jpg`. 런처 이름 "PlayDrive"(aapt `application-label`).
+- 참고: 재설치 직후 독의 실행 중 칸에 기본 로봇 아이콘이 잠깐 보임(독 캐시). 다른 앱으로 갔다 오면 새 아이콘으로 바뀜.
+
+### 2. release APK
+- 키: `~/.playdrive/playdrive-release.jks`(PKCS12, RSA 2048, 10000일, DN = `CN=PlayDrive`만), 비밀번호는 `~/.playdrive/keystore.properties`(권한 600). 저장소 밖. gradle은 이 파일(또는 local.properties의 `playdrive.keystore=<경로>`)이 있을 때만 서명.
+- minify 끔. versionName 1.0. `apk/PlayDrive_v1.0_release.apk` 23.9MB(< 100MB → 저장소에 포함). apksigner 확인 `CN=PlayDrive`.
+- release에서 데모 드라이브 진입: 무드 화면 왼쪽 위 **데모 드라이브** 유리 버튼(정차 중에만, 음악 준비 후 활성). 디버그 버튼은 왼쪽 아래로 옮김(디버그 빌드만).
+  adb 인텐트는 release에서 `demo`, `seed:albums`, `icon:demo:off|on`만 받음. 여러 명령은 `;`로 이어서(`'seed:albums;demo'`).
+- 에뮬레이터 확인(release): 데모 74초 → 주행 중 정지 프레임·버튼 숨김 → 80초쯤 제안 카드. 오류 로그 0.
+- 첫 실행 시 CAR_SPEED 권한 창이 "위치 정보" 권한으로 뜸(AAOS 권한 그룹). `pm grant`는 `--user 10`(운전자 사용자)에 줘야 함.
+
+### 3. README
+- 심사위원용으로 재구성(소개 → 영상 자리 → v3 핵심 장면 6장 → 동작 표 → 안전 설계 → SDK·권한 → 실행 → 음원 → 라이선스). v1~v3 화면 기록은 아래 절로 옮김.
+
+### 4. 시연 영상 녹화(`tools/record_demo.sh`)
+- 소리 측정: `adb emu screenrecord`의 오디오 트랙은 앱 재생 중에도 평균 −62.7dB(호스트 마이크로 추정), scrcpy 5.0.1 `--audio-source=playback`/`output`은 −91dB(디지털 무음) — AAOS 차량 오디오 버스로 가는 앱 소리는 기기 안 캡처로 잡히지 않음.
+- 해결: 디버그 빌드 전용 `WavTap` — AudioTrack에 쓰는 float PCM을 그대로 16bit 스테레오 WAV로(`rec:audio:on|off`, 일시정지 중엔 무음을 채워 길이 유지). 첫 샘플의 벽시계 시각을 기록해 영상 시작 시각과 맞춤(기기−맥 시계 차이 보정, 측정 약 234ms).
+- 앱 창 자르기 1680×1206(+855+92, 창 테두리 2px 제외), 30fps, x264 CRF 16 + AAC 192k.
+- 10초 테스트: 300프레임/10초, 소리 평균 −18.7dB·최대 −4.7dB(클리핑 없음).
+
+
+## 2026-11-12 — README에서 옮긴 화면 기록(v1~v3)
+
+README를 심사위원용으로 다시 쓰면서 버전별 화면 설명과 스크린샷 표를 여기로 옮겼다(스크린샷 파일은 `docs/screens/`에 그대로).
+
+### 화면 v3 — 다듬은 빛
+
+빗방울은 대부분 투명한 작은 렌즈(뒤 장면이 뒤집혀 비침, 빛 쪽에만 반짝임, 3~5개는 흘러내린 자국), 노을은 남보라→앰버를 OKLCh로 보간, 아침은 오른쪽 위 금빛 햇빛, 제안 카드는 버튼과 같은 유리. 테이프스톱 흔적은 앨범 커버에만(물결이 한 번 부드럽게 흩어진 모양).
+앨범 커버 규칙: 시간대 = 바탕색, 정차 횟수 = 빛의 개수(1~5), 부드러움 = 빛의 크기·선명도, 주행 시간 = 빛의 퍼짐, 비 = 물방울, 테이프스톱 = 물결 흩어짐, 주행 ID로 고정.
+
+| 아침 · 정차 · 비 | 노을 · 정차 | 밤 · 주행 중(정지 프레임) | 제안 카드(유리) |
+|---|---|---|---|
+| ![](screens/v3/morning_03_parked_rain.jpg) | ![](screens/v3/sunset_02_parked.jpg) | ![](screens/v3/night_04_driving_frozen.jpg) | ![](screens/v3/sunset_08_park_card.jpg) |
+| **정차: 지난 구간이 한 겹(빛)으로** | **노을 · 비** | **마음 앨범(6장 예시)** | **앨범 상세** |
+| ![](screens/v3/night_05_stop_reveal.jpg) | ![](screens/v3/sunset_03_parked_rain.jpg) | ![](screens/v3/20_album_grid.jpg) | ![](screens/v3/21_album_detail.jpg) |
+
+전체 목록은 `docs/screens/v3/`(v2와 같은 구성, `*_full.jpg` = 차량 화면 전체 2560×1440).
+
+### 화면 v2 — 빛을 재료로 쓰는 화면
+
+무드 화면과 마음 앨범 커버를 **AGSL 셰이더(API 33+, Compose)** 한 벌로 그립니다. 시간대 색온도 배경 + 부드러운 메인 빛(박에 맞춰 3%만 숨쉬기) + 깊이가 다른 보조 빛(오늘 커버의 겹) + 바닥에 반사된 듯한 가는 빛 띠 + 앞유리 물방울(비) + 미세 필름 그레인. 주행 중에는 완성된 한 장으로 멈춥니다. API 33 미만은 Canvas 버전으로 그립니다.
+
+| 웰컴(검은 화면 → 3초 동안 피어남) | 아침 · 정차 | 노을 · 정차 · 비 | 밤 · 주행 중(정지 프레임) |
+|---|---|---|---|
+| ![](screens/v2/01_welcome_b_bloom.jpg) | ![](screens/v2/morning_02_parked.jpg) | ![](screens/v2/sunset_03_parked_rain.jpg) | ![](screens/v2/night_04_driving_frozen.jpg) |
+| **정차: 지난 구간이 한 겹(빛)으로** | **마지막 정차** | **굿바이(2초 동안 가라앉음)** | **마음 앨범(같은 셰이더 커버)** |
+| ![](screens/v2/night_05_stop_reveal.jpg) | ![](screens/v2/sunset_06_last_stop.jpg) | ![](screens/v2/night_07_goodbye.jpg) | ![](screens/v2/20_album_grid.jpg) |
+
+전체 목록은 `docs/screens/v2/`(아침·노을·밤 × 정차/비/주행 중/정차 장면/마지막 정차/굿바이/제안 카드, `*_full.jpg` = 차량 화면 전체 2560×1440).
+
+### 화면 v1(Canvas)
+
+| 무드(정차, 오늘 커버가 은은하게) | 무드(주행 중 — 완전 정지) | 주차 후 1분 제안 | 1분 호흡 |
+|---|---|---|---|
+| ![](screens/01_mood_parked.png) | ![](screens/02_mood_driving.png) | ![](screens/03_park_offer.png) | ![](screens/04_breath.png) |
+| **마음 앨범(새 앨범 강조)** | **앨범 상세(회고 있음)** | **앨범 상세(회고 입력)** | **같은 날 두 번째 주행** |
+| ![](screens/05_album_grid.png) | ![](screens/06_album_detail.png) | ![](screens/07_album_detail_input.png) | ![](screens/08_album_second_trip.png) |
+| **정차 직전(주행 중 정지 화면)** | **정차 순간: 지난 구간이 커버에 한 겹** | **정차 3초 뒤** | **마지막 정차: 빗줄기·흐트러진 물결 자국** |
+| ![](screens/09_stop_before.png) | ![](screens/10_stop_reveal.png) | ![](screens/11_stop_after.png) | ![](screens/12_last_stop_reveal.png) |
+
+앱 창 영역(1682×1210dp)만 자른 이미지입니다. 차량 화면 전체(Pleos Connect v2.1.0 프로필 2560×1440)는 같은 이름의 `*_full.png`를 보세요.
+
+- 주행 중(CarUxRestrictions `requiresDistractionOptimization`)에는 단색 배경과 추상 그래픽, 재생/일시정지 버튼만 보이고 **그래픽이 완전히 멈춥니다**(Android 차량 앱 품질 기준 SA-1). 음악 상태 변화는 정차하는 순간 한 번에 반영됩니다.
+- 웰컴: 앱을 켜면 검은 화면에서 3초 동안 빛이 피어나고, 첫 다운비트에 부드러운 차임(코드에서 합성한 A·C·E 종소리)과 함께 음악이 시작됩니다. 주차 후에는 2초 동안 빛이 가라앉은 뒤 "1분 숨 고르기"를 제안합니다.
+- "운전 중엔 귀로, 멈추면 눈으로": 주행하며 오늘의 앨범 커버를 계속 그려 두고(화면엔 반영 안 함), 정차하는 순간 지난 구간이 커버에 한 겹 추가되는 장면을 보여줍니다. 부드럽게 달린 구간은 둥근 원이 크게, 비 온 구간은 빗줄기, 급가속·급제동(테이프스톱)은 물결이 흐트러진 자국. 주차하면 그 커버가 그대로 마음 앨범의 새 앨범이 됩니다.
+- 주차(P단) 후 운전석에만 사람이 있을 때 "1분 숨 고르기"를 제안합니다. 동승자가 있으면 제안하지 않습니다.
+- 마음 앨범: 주행 한 번이 앨범 한 장이 됩니다. 정사각 커버 격자에 제목 한 줄, 커버를 누르면 큰 커버·날짜·회고 한 줄을 봅니다. 커버는 그날 운전의 부드러움·비·시간대로 그린 추상 그래픽이고, 회고 한 줄은 정차 중에만 남길 수 있습니다. 같은 날 같은 시간대 제목이 겹치면 "…빗속의 두 번째 길"처럼 구분합니다. 기록은 기기 안에만 저장합니다.
+- 차량 화면 기준: 터치 영역 76dp 이상, 본문 24sp·제목 32sp 이상.

@@ -110,6 +110,24 @@ class DriveController(context: Context, private val listener: Listener) {
         session?.pause()
     }
 
+    /** 시연 영상용(디버그): 앱 소리를 WAV로 저장 시작. 반환 = 저장 파일. */
+    fun startAudioTap(file: java.io.File): java.io.File? {
+        val a = audio ?: return null
+        a.tap?.close()
+        a.tap = app.playdrive.audio.WavTap(file, timing.sampleRate)
+        return file
+    }
+
+    /** 저장을 끝내고 첫 샘플 시각(벽시계 ms)을 돌려준다. */
+    fun stopAudioTap(): Long? {
+        val a = audio ?: return null
+        val t = a.tap ?: return null
+        a.tap = null
+        Thread.sleep(40)  // 오디오 스레드가 쓰던 블록을 마치도록
+        t.close()
+        return t.startEpochMs
+    }
+
     fun release() {
         engineHandler.post {
             source?.stop()
