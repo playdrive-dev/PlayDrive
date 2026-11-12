@@ -7,7 +7,7 @@
 페달·핸들·방향지시등이 악기가 되고, 부드럽게 운전할수록 연주가 완성됩니다. 급가속·급제동을 하면 음악이 흐트러지고, 다시 부드럽게 달리면 한 마디씩 돌아옵니다. 운전 반응 음악은 대개 가속에 보상하지만, PlayDrive는 **안전에 보상**합니다.
 
 - 플랫폼: Pleos Connect (Android Automotive OS, API 34) · 카테고리: Music/Audio
-- APK: [`apk/PlayDrive_v1.0_release.apk`](apk/PlayDrive_v1.0_release.apk)
+- APK: [`apk/플레이드라이브_PlayDrive_release.apk`](apk/플레이드라이브_PlayDrive_release.apk)
 
 ## 데모 영상
 
@@ -114,7 +114,7 @@
 ### 2. APK 설치
 
 ```bash
-adb install -r apk/PlayDrive_v1.0_release.apk
+adb install -r apk/플레이드라이브_PlayDrive_release.apk
 ```
 
 앱 목록에서 **PlayDrive**를 실행합니다.
