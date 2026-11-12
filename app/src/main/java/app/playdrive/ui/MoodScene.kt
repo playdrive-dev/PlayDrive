@@ -41,15 +41,22 @@ data class MoodFrame(
     val pulse: Float = 1f,
     /** 장면 시각(초, 0~600 순환). 모든 느린 움직임의 주기(10·12초 등)는 600초를 나눈다 → 순환해도 튀지 않음. */
     val timeSec: Float = 0f,
+    /** 주행 중 이벤트 반응([DriveMotion]): 메인 빛 크기·밝기 배수. 정차 중엔 1(정차 직후 3초에 걸쳐 1로). */
+    val mainScale: Float = 1f,
+    val mainGain: Float = 1f,
+    /** 물방울 세기 0~1(와이퍼 ON/OFF 때 2초 페이드). */
+    val rainAmount: Float = if (rain) 1f else 0f,
 )
 
 /**
  * 무드 화면의 상태 기계(순수 Kotlin, 시간은 밖에서 넣는다). "운전 중엔 귀로, 멈추면 눈으로".
  *
- * Android 차량 앱 품질 기준 SA-1(미디어 앱은 주행 중 움직이는 그래픽 금지, 주차 중만 예외):
- *  - restricted(주행 중, requiresDO=true): **장면 시계가 멈춘다** → 빛·색·물결·커버 모두 변화 0.
+ * 주행 중 화면 정책 "이벤트 때만 한 번 반응(최소 변화)"(Pleos 운전자 주의 분산 가이드: 장식적·반복적 움직임 지양):
+ *  - restricted(주행 중, requiresDO=true): **장면 시계가 멈춘다** → 느린 움직임·숨쉬기·박 동기 밝기·색·물결·커버 변화 0.
  *    멈추는 순간 진행 중이던 전환(음악 전환·커버 장면·웰컴·굿바이·시간대)은 **완성된 모습으로 맞춘 뒤** 멈춘다
  *    → 정지 프레임이 그 자체로 완성된 한 장. 음악 상태·커버의 새 겹·시간대 변화·박 신호는 반영하지 않고 보관한다.
+ *    예외는 [DriveMotion]: 레이어 증감·테이프스톱·와이퍼 때만 메인 빛 크기·밝기, 물방울을 한 번 전환(≤2초, 간격 ≥10초).
+ *    전환 중이 아니면 프레임이 변하지 않는다.
  *  - restricted가 풀리는 순간(정차): 시계가 다시 흐르고, 보관한 음악 상태로 3초 전환 + 지난 구간이 커버에 한 겹 추가되는 장면([REVEAL_MS]).
  *  - 정차·주차 중: 10·12초 주기의 아주 느린 움직임 + 박에 맞춰 메인 빛 밝기 3% 숨쉬기.
  */
@@ -87,8 +94,38 @@ class MoodScene(
 
     val restricted: Boolean get() = frozenAt != null
 
-    /** 정차 중에는 계속 다시 그려야 한다(느린 움직임). 주행 중에는 다시 그릴 필요가 없다. */
+    /** 정차 중에는 계속 다시 그려야 한다(느린 움직임). 주행 중에는 다시 그릴 필요가 없다(이벤트 전환 중만 [animatingAt]). */
     val animating: Boolean get() = !restricted
+
+    // ---- 주행 중 이벤트 반응
+    private var drive: DriveMotion? = null
+    private var lastLayers = 0
+    private var exitFrom = DriveMotion.NEUTRAL.copy(rain = 0f)
+    private var exitStart = Long.MIN_VALUE / 2
+
+    /** 지금 프레임을 계속 다시 그려야 하는지(정차 중, 또는 주행 중 이벤트 전환 중). */
+    fun animatingAt(nowMs: Long) = !restricted || drive?.transitioning(nowMs) == true
+
+    /**
+     * 음악 이벤트(주행 중 반응용). 정차 중에도 레이어 수는 기억해 둔다(출발 순간 기준).
+     * tapeStop = 이번에 새로 난 테이프스톱(급제동·급가속).
+     */
+    fun music(layers: Int, tapeStop: Boolean, rain: Boolean, nowMs: Long) {
+        lastLayers = layers
+        val d = drive ?: return
+        if (tapeStop) d.tapeStop()
+        d.layers(layers); d.rain(rain)
+        d.update(nowMs)
+    }
+
+    /** 주행 중: 미뤄 둔 전환을 시작할 수 있으면 시작. 반환 = 전환 중. */
+    fun tick(nowMs: Long): Boolean = drive?.update(nowMs) ?: false
+
+    /** 주행 중 다음에 [tick]해야 할 시각(없으면 null = 완전 정지). */
+    fun nextWakeMs(nowMs: Long): Long? = drive?.nextWakeMs(nowMs)
+
+    /** 주행 중 시작한 전환들(시작, 길이) — 테스트·로그용. */
+    val driveTransitions: List<Pair<Long, Long>> get() = drive?.transitions.orEmpty()
 
     fun setRestricted(r: Boolean, nowMs: Long) {
         if (r == restricted) return
@@ -98,12 +135,19 @@ class MoodScene(
             cover?.let { revealFrom = it.layers.size }; revealStart = Long.MIN_VALUE / 2
             dayFrom = dayTo; dayStart = Long.MIN_VALUE / 2
             masterFrom = 1f; masterTo = 1f; masterStart = Long.MIN_VALUE / 2
+            exitStart = Long.MIN_VALUE / 2
             frozenAt = nowMs
+            drive = DriveMotion(initialRain = to.rain, initialLayers = lastLayers)
             return
         }
+        // 정차: 주행 중 반응(크기·밝기·물방울)을 보관한 음악 상태와 함께 3초에 걸쳐 정차 모습으로
+        val d = drive!!
+        exitFrom = d.values(nowMs)
+        drive = null
         pausedTotal += nowMs - frozenAt!!
         frozenAt = null
         val t = st(nowMs)
+        exitStart = t
         pending?.let { pending = null; startFade(it, t) }
         pendingCover?.let { pendingCover = null; applyCover(it, t) }
         pendingDay?.let { pendingDay = null; if (it != dayTo) startDay(it, t) }
@@ -204,9 +248,20 @@ class MoodScene(
         val c = cover
         val inReveal = c != null && revealFrom < c.layers.size && t >= revealStart && t - revealStart < REVEAL_MS
         val pulse = if (restricted) 1f else beatPhase?.let { pulseShape(it) } ?: 1f
+        // 주행 중 = 이벤트 반응 값, 정차 직후 3초 = 그 값에서 1로, 그 외 = 1
+        val d = drive
+        val dv = when {
+            d != null -> d.values(nowMs)
+            else -> {
+                val k = smooth(((t - exitStart).toFloat() / fadeMs).coerceIn(0f, 1f))
+                val baseRain = if (s.rain) 1f else 0f
+                DriveMotion.Values(lerp(exitFrom.scale, 1f, k), lerp(exitFrom.gain, 1f, k), if (k >= 1f) baseRain else lerp(exitFrom.rain, baseRain, k))
+            }
+        }
+        val rainOn = if (d != null) dv.rain > 0.5f else s.rain
         val dayK = ((t - dayStart).toFloat() / DAY_FADE_MS).coerceIn(0f, 1f)
         return MoodFrame(
-            bg, circles, tone, withAlpha(tone, 70), amp, phase, s.rain,
+            bg, circles, tone, withAlpha(tone, 70), amp, phase, rainOn,
             cover = c,
             coverAlpha = COVER_ALPHA + (COVER_ALPHA_REVEAL - COVER_ALPHA) * bright,
             revealFrom = if (inReveal) revealFrom else (c?.layers?.size ?: 0),
@@ -218,6 +273,7 @@ class MoodScene(
             master = masterAt(t),
             pulse = pulse,
             timeSec = ((t - origin).mod(LOOP_MS)).toFloat() / 1000f,
+            mainScale = dv.scale, mainGain = dv.gain, rainAmount = dv.rain,
         )
     }
 

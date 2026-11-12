@@ -159,7 +159,7 @@ object AlbumNaming {
     }
 }
 
-/** 무드 그래픽 상태(순수). 주행 중에는 화면에 반영되지 않는다(ui/MoodScene, SA-1). */
+/** 무드 그래픽 상태(순수). 주행 중에는 화면에 반영되지 않고 정차 때 반영된다(ui/MoodScene). 주행 중 반응은 ui/DriveMotion. */
 data class MoodState(val energy: Float, val calm: Float, val brightness: Float, val rain: Boolean) {
     companion object {
         fun from(state: DrivingState, activeLayers: Int, totalLayers: Int) = MoodState(

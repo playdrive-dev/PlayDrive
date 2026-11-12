@@ -22,7 +22,7 @@ import kotlin.math.sin
 /**
  * (API 33 미만 대체) 운전 중 무드 화면: 단색 배경 + 추상 그래픽(겹친 원과 물결). 글자·숫자 없음.
  * 상태·시간 규칙은 [MoodScene](순수, 단위 테스트):
- * - restricted(주행 중, SA-1): 완전히 멈춤. 다시 그리지도 않는다(invalidate 없음 → CPU도 0에 가깝다).
+ * - restricted(주행 중): 기본은 정지(다시 그리지 않음). 음악 이벤트 때만 [DriveMotion] 전환(≤2초) 동안 다시 그린다.
  * - 정차 중: 원이 12초 주기로 아주 천천히 숨 쉬듯 움직이고, 주행 중 쌓인 음악 상태로 3초에 걸쳐 바뀐다.
  */
 class CanvasMoodLayer(context: Context, private val host: MoodView) : View(context) {
@@ -46,8 +46,8 @@ class CanvasMoodLayer(context: Context, private val host: MoodView) : View(conte
         val ma = f.moodAlpha
         // 겹친 원 3개: 레이어가 많을수록(에너지) 크고 넓게. 가장자리는 투명으로 번진다.
         for ((rr, col) in f.circles) {
-            val r = rr * unit
-            val a = (Color.alpha(col) * ma).toInt()
+            val r = rr * unit * f.mainScale
+            val a = (Color.alpha(col) * ma * f.mainGain).toInt().coerceIn(0, 255)
             paint.shader = RadialGradient(cx, cy, r, (a shl 24) or (col and 0xFFFFFF), Color.TRANSPARENT, Shader.TileMode.CLAMP)
             c.drawCircle(cx, cy, r, paint)
         }
@@ -66,12 +66,12 @@ class CanvasMoodLayer(context: Context, private val host: MoodView) : View(conte
             }
             c.drawPath(path, wavePaint)
         }
-        if (f.rain) { // 비: 가는 사선 몇 개(정적)
-            wavePaint.color = Color.argb(40, 200, 220, 255)
+        if (f.rainAmount > 0f) { // 비: 가는 사선 몇 개(정적, 와이퍼 ON/OFF 때 페이드)
+            wavePaint.color = Color.argb((40 * f.rainAmount).toInt(), 200, 220, 255)
             for (i in 0 until 14) { val x = w * (i + 0.5f) / 14; c.drawLine(x, h * 0.1f, x - 20, h * 0.1f + 60, wavePaint) }
         }
         if (f.master < 1f) c.drawColor(Color.argb(((1f - f.master) * 255).toInt(), 0, 0, 0))
-        if (scene.animating && isAttachedToWindow) postInvalidateOnAnimation()
+        if (scene.animatingAt(now()) && isAttachedToWindow) postInvalidateOnAnimation()
     }
 }
 

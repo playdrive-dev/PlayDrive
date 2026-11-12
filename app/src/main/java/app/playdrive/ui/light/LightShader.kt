@@ -39,6 +39,7 @@ uniform float bandY;
 uniform float bandWave;
 uniform float rain;
 uniform float rainSeed;
+uniform float rainAlpha;   // 물방울 페이드(0~1)
 uniform float4 glass[3];
 uniform float4 glassRad;
 uniform float glassCount;
@@ -233,7 +234,7 @@ half4 main(float2 fc) {
     float4 dr = float4(0.0);
     if (rain > 0.001) {
         float2 lp = mainLight.w > 0.0 ? mainLight.xy : (lightCount > 0.0 ? lights[0].xy : float2(iResolution.x / iResolution.y * 0.7, 0.2));
-        dr = drops(p, lp);
+        dr = drops(p, lp) * rainAlpha;
     }
     float3 col = sceneCol(p + dr.xy, blur);
     float3 W = float3(0.299, 0.587, 0.114);

@@ -112,8 +112,9 @@ object LightParams {
         val tone = AlbumNaming.lerpColor(0xFFE59A5C.toInt(), 0xFF6CC3B5.toInt(), s.calm)
         val mainColor = mix(f(1f, 0.87f, 0.72f), rgb(tone), 0.55f)
         val bloomIn = 0.55f + 0.45f * fr.master
-        val mainR = 0.14f * (1f + 0.45f * s.energy) * (1f + 0.025f * tau(t, 12f)) * bloomIn
-        val mainI = (0.55f + 0.25f * s.brightness + 0.2f * s.energy) * fr.pulse * fr.moodAlpha.coerceAtLeast(0.55f)
+        // mainScale·mainGain = 주행 중 이벤트 반응(DriveMotion), 정차 중엔 1
+        val mainR = 0.14f * (1f + 0.45f * s.energy) * (1f + 0.025f * tau(t, 12f)) * bloomIn * fr.mainScale
+        val mainI = (0.55f + 0.25f * s.brightness + 0.2f * s.energy) * fr.pulse * fr.moodAlpha.coerceAtLeast(0.55f) * fr.mainGain
         val main = f(aspect / 2 + 0.012f * tau(t, 10f), 0.40f + 0.008f * tau(t + 2.5f, 12f), mainR, mainI)
 
         // 보조 빛: 깊은 곳의 은은한 빛 2개 + 오늘 커버의 겹(최근 6개, 오래된 겹일수록 깊이)
@@ -162,7 +163,8 @@ object LightParams {
             "ring" to ring,
             "scars" to scars, "scarCount" to f(ns.toFloat()),
             "bandY" to f(0.80f), "bandWave" to f((0.004f + 0.012f * (1f - s.calm)) * (0.6f + 0.6f * s.energy)),
-            "rain" to f(if (fr.rain) 0.85f else 0f), "rainSeed" to f(3f),
+            // 물방울 배치는 고정(0.85), 나타나고 사라지는 건 rainAlpha로 페이드(와이퍼 ON/OFF 2초)
+            "rain" to f(if (fr.rainAmount > 0f) 0.85f else 0f), "rainAlpha" to f(fr.rainAmount), "rainSeed" to f(3f),
             "glass" to g, "glassRad" to gr, "glassCount" to f(glass.size.coerceAtMost(MAX_GLASS).toFloat()),
             "master" to f(fr.master),
         )
@@ -197,7 +199,7 @@ object LightParams {
             "ring" to FloatArray(4),
             "scars" to scars, "scarCount" to f(ns.toFloat()),
             "bandY" to f(0.82f), "bandWave" to f(0.004f + 0.014f * c.wave),
-            "rain" to f((c.rainLines / 20f).coerceIn(0f, 1f)), "rainSeed" to f((c.id % 997).toFloat()),
+            "rain" to f((c.rainLines / 20f).coerceIn(0f, 1f)), "rainAlpha" to f(1f), "rainSeed" to f((c.id % 997).toFloat()),
             "glass" to FloatArray(MAX_GLASS * 4), "glassRad" to FloatArray(4), "glassCount" to f(0f),
             "master" to f(1f),
         )

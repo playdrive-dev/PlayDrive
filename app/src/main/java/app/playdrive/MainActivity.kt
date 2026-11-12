@@ -75,6 +75,7 @@ class MainActivity : ComponentActivity(), DriveController.Listener {
     private var simMoving = false
     private val driving get() = uxRestricted || simMoving
     private var lastState = DrivingState()
+    private var lastTapeMs = Long.MIN_VALUE
     private var lastAlbum: Album? = null
     private var prepared = false
     private var pendingIntent: Intent? = null
@@ -188,6 +189,11 @@ class MainActivity : ComponentActivity(), DriveController.Listener {
         lastState = state
         if (simMoving != state.moving) { simMoving = state.moving; applyDrivingPolicy() }
         throttle.offer(MoodState.from(state, layers.size, controller.totalLayers))?.let { mood.show(it) }  // 주행 중이면 MoodView가 보관만 한다
+        // 주행 중 이벤트 반응(레이어 증감·테이프스톱·와이퍼) — 전환 간격·길이 제한은 DriveMotion이 지킨다
+        val tape = recentEvents.lastOrNull { it is DrivingEvent.HarshBraking || it is DrivingEvent.HarshAcceleration }?.timeMs
+        val newTape = tape != null && tape > lastTapeMs
+        if (newTape) lastTapeMs = tape!!
+        mood.music(layers.size, newTape, state.raining)
         debugDetail?.text = buildString {
             appendLine("속도 ${"%.1f".format(state.speedMps * 3.6f)} km/h  가속 ${"%.2f".format(state.accelMps2)}  기어 ${state.gear}  브레이크 ${state.brakePressed}")
             appendLine("주행=${state.moving} 정속=${state.cruising} 방향지시등=${state.turnSignal} 비=${state.raining} 혼자=${state.solo}  UX제한=$uxRestricted")
@@ -418,14 +424,14 @@ class MainActivity : ComponentActivity(), DriveController.Listener {
     }
 
     // ------------------------------------------------------------------ 신호원
-    private fun startDemo() { controller.start(DemoDriveSource(controller.engineHandler) { controller.notifyFinished() }); debugStatus?.text = "데모 드라이브 재생 중" }
+    private fun startDemo() { lastTapeMs = Long.MIN_VALUE; controller.start(DemoDriveSource(controller.engineHandler) { controller.notifyFinished() }); debugStatus?.text = "데모 드라이브 재생 중" }
 
     private fun requestSpeedThenStart() {
         if (checkSelfPermission(PERM_SPEED) == PackageManager.PERMISSION_GRANTED) startReal() else speedPermission.launch(PERM_SPEED)
     }
 
     /** 실제 신호원은 음악을 바로 틀지 않는다(웰컴 끝에 차임과 함께). */
-    private fun startReal() { controller.start(PleosVehicleSignalSource(this), autoPlay = SystemClock.uptimeMillis() >= welcomeEndsAt) }
+    private fun startReal() { lastTapeMs = Long.MIN_VALUE; controller.start(PleosVehicleSignalSource(this), autoPlay = SystemClock.uptimeMillis() >= welcomeEndsAt) }
 
     // ------------------------------------------------------------------ 디버그 인텐트
     override fun onNewIntent(intent: Intent) {

@@ -32,7 +32,8 @@ import app.playdrive.ui.light.LightShader
  * 무드 화면. 상태는 [MoodScene](순수·단위 테스트), 그리기는
  *  - API 33+: Compose + AGSL RuntimeShader([LightShader]) — "빛을 재료로 쓰는 화면"
  *  - API 33 미만: Canvas([CanvasMoodLayer])
- * 주행 중(restricted)에는 다시 그리기를 요청하지 않는다 → 마지막 프레임이 그대로 남는다(SA-1).
+ * 주행 중(restricted)에는 기본적으로 다시 그리지 않는다 → 마지막 프레임이 그대로 남는다.
+ * 예외: 음악 이벤트([music])로 [DriveMotion] 전환이 시작되면 그 전환(≤2초) 동안만 그리고, 끝 프레임을 한 번 더 그린 뒤 다시 멈춘다.
  *
  * renderScale < 1 이면 그 배율로 작게 그린 뒤 확대한다(하드웨어 레이어, 부하 절감).
  */
@@ -73,7 +74,36 @@ class MoodView(context: Context, val renderScale: Float = 1f, forceCanvas: Boole
 
     var restricted: Boolean
         get() = scene.restricted
-        set(v) { if (v != scene.restricted) { scene.setRestricted(v, now()); animating.value = !v; redraw(force = true) } }
+        set(v) {
+            if (v == scene.restricted) return
+            scene.setRestricted(v, now())
+            removeCallbacks(driveTick)
+            animating.value = !v
+            redraw(force = true)
+        }
+
+    /** 음악 이벤트(레이어 수, 새 테이프스톱, 비). 주행 중이면 이벤트 반응 전환을 시작하거나 다음 가능 시각으로 미룬다. */
+    fun music(layers: Int, tapeStop: Boolean, rain: Boolean) {
+        scene.music(layers, tapeStop, rain, now())
+        if (scene.restricted) scheduleDrive()
+    }
+
+    private val driveTick = Runnable { scene.tick(now()); scheduleDrive() }
+
+    /** 주행 중: 전환 중이면 프레임 루프를 켜고, 끝나면 끝 프레임을 한 번 그린 뒤 루프를 끈다. 다음 할 일이 있으면 그때 깨운다. */
+    private fun scheduleDrive() {
+        removeCallbacks(driveTick)
+        if (!scene.restricted) return
+        val t = now()
+        val moving = scene.animatingAt(t)
+        if (moving != animating.value) {
+            animating.value = moving
+            if (!moving) redraw(force = true)
+            android.util.Log.i("PlayDrive.Mood", if (moving) "주행 중 전환 시작 ${scene.driveTransitions.lastOrNull()}" else "주행 중 전환 끝")
+        }
+        if (moving && layer !is androidx.compose.ui.platform.ComposeView) layer.invalidate()
+        scene.nextWakeMs(t)?.let { postDelayed(driveTick, (it - t).coerceAtLeast(0)) }
+    }
 
     fun show(s: MoodState, immediate: Boolean = false) { scene.show(s, now(), immediate); redraw() }
     fun setCover(c: CoverSpec?, immediate: Boolean = false) { scene.setCover(c, now(), immediate); redraw() }
