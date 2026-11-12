@@ -47,12 +47,13 @@ import app.playdrive.ui.UxRestrictionsWatcher
  *  - 주차 후 1분: P단 + 운전석만 착석 → 제안 카드 → 1분 호흡(BREATH) → 마음 앨범
  *  - ALBUM: 마음 앨범(주행 1회 = 1장) — 정사각 커버 격자 + 제목 한 줄
  *  - ALBUM_DETAIL: 큰 커버 + 제목 + 날짜 + 회고 한 줄(입력은 정차 중에만)
+ *  - SETTINGS: 화면 효과(라이브/차분) — 정차 중에만
  *  - DEBUG: 개발용(디버그 빌드)
  * 주행 중(CarUxRestrictions가 DO 요구 또는 시뮬레이션 주행 중)에는 MOOD 외 화면을 닫는다.
  */
 class MainActivity : ComponentActivity(), DriveController.Listener {
 
-    enum class Screen { MOOD, BREATH, ALBUM, ALBUM_DETAIL, DEBUG }
+    enum class Screen { MOOD, BREATH, ALBUM, ALBUM_DETAIL, SETTINGS, DEBUG }
 
     private lateinit var controller: DriveController
     private lateinit var root: FrameLayout
@@ -60,6 +61,7 @@ class MainActivity : ComponentActivity(), DriveController.Listener {
     private lateinit var play: PlayPauseButton
     private lateinit var albumBtn: View
     private lateinit var demoBtn: View
+    private lateinit var settingsBtn: View
     private lateinit var debugBtn: GlyphButton
     private var ux: UxRestrictionsWatcher? = null
     private val throttle = MoodThrottle()
@@ -76,6 +78,8 @@ class MainActivity : ComponentActivity(), DriveController.Listener {
     private val driving get() = uxRestricted || simMoving
     private var lastState = DrivingState()
     private var lastTapeMs = Long.MIN_VALUE
+    private var prevLayers = 0
+    private var recoverTo = 0
     private var lastAlbum: Album? = null
     private var prepared = false
     private var pendingIntent: Intent? = null
@@ -100,6 +104,10 @@ class MainActivity : ComponentActivity(), DriveController.Listener {
         // 데모 드라이브(릴리스에도 있음 — 실제 차량 신호 없이 심사·시연용으로 74초 주행을 재생). 정차 중에만 보인다.
         demoBtn = glassPill(getString(R.string.demo_drive), null) { if (prepared && !driving) { dismissOverlay(); showMood(); startDemo() } }.apply { isEnabled = false; alpha = 0.4f }
         root.addView(demoBtn, FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(TOUCH_DP), Gravity.TOP or Gravity.START).apply { setMargins(dp(20), dp(20), 0, 0) })
+        // 설정(화면 효과): 오른쪽 아래, 정차 중에만
+        settingsBtn = GlyphButton(this, 'S', getString(R.string.settings_title)).apply { setOnClickListener { showSettings() } }
+        root.addView(settingsBtn, FrameLayout.LayoutParams(dp(TOUCH_DP), dp(TOUCH_DP), Gravity.BOTTOM or Gravity.END).apply { setMargins(0, 0, dp(20), dp(20)) })
+        mood.effect = loadEffect()
         // 개발용(디버그 빌드에서만 보임, 릴리스 빌드엔 없음)
         debugBtn = GlyphButton(this, 'D', "debug").apply { setOnClickListener { showDebug() }; visibility = if (BuildConfig.DEBUG) View.VISIBLE else View.GONE }
         root.addView(debugBtn, FrameLayout.LayoutParams(dp(TOUCH_DP), dp(TOUCH_DP), Gravity.BOTTOM or Gravity.START).apply { setMargins(dp(20), 0, 0, dp(20)) })
@@ -108,12 +116,13 @@ class MainActivity : ComponentActivity(), DriveController.Listener {
         controller = DriveController(this, this)
         controller.prepare()
         mood.beatSource = { controller.beatPhase() }
+        mood.beatInfo = { controller.beatInfo() }
         // 시간대 색온도: 지금 시각으로 시작, 1분마다 확인(바뀌면 정차 중 6초에 걸쳐)
         mood.setDayPart(currentDayPart(), immediate = true)
         root.postDelayed(object : Runnable { override fun run() { if (dayOverride == null) mood.setDayPart(currentDayPart()); root.postDelayed(this, 60_000) } }, 60_000)
         // 유리 패널 위치(버튼이 움직이거나 보이고 숨을 때마다)
         val relayout = View.OnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> updateGlass() }
-        play.addOnLayoutChangeListener(relayout); albumBtn.addOnLayoutChangeListener(relayout); demoBtn.addOnLayoutChangeListener(relayout)
+        play.addOnLayoutChangeListener(relayout); albumBtn.addOnLayoutChangeListener(relayout); demoBtn.addOnLayoutChangeListener(relayout); settingsBtn.addOnLayoutChangeListener(relayout)
         // 웰컴: 검은 화면 → 3초 동안 빛이 피어남 → (음악 준비가 끝났으면) 첫 다운비트에 차임 + 음악 시작
         mood.welcome()
         welcomeEndsAt = SystemClock.uptimeMillis() + app.playdrive.ui.MoodScene.WELCOME_MS
@@ -151,6 +160,7 @@ class MainActivity : ComponentActivity(), DriveController.Listener {
         val show = !driving && overlay == null
         albumBtn.visibility = if (show) View.VISIBLE else View.GONE
         demoBtn.visibility = if (show && demoIcon) View.VISIBLE else View.GONE
+        settingsBtn.visibility = if (show && demoIcon) View.VISIBLE else View.GONE
         debugBtn.visibility = if (BuildConfig.DEBUG && show && debugIcon) View.VISIBLE else View.GONE
         updateGlass()
     }
@@ -165,6 +175,7 @@ class MainActivity : ComponentActivity(), DriveController.Listener {
         add(play, play.width / 2f)
         add(albumBtn, albumBtn.height / 2f)
         add(demoBtn, demoBtn.height / 2f)
+        add(settingsBtn, settingsBtn.height / 2f)
         overlay?.let { add(it, dp(28).toFloat()) }
         mood.glass = list
     }
@@ -192,8 +203,10 @@ class MainActivity : ComponentActivity(), DriveController.Listener {
         // 주행 중 이벤트 반응(레이어 증감·테이프스톱·와이퍼) — 전환 간격·길이 제한은 DriveMotion이 지킨다
         val tape = recentEvents.lastOrNull { it is DrivingEvent.HarshBraking || it is DrivingEvent.HarshAcceleration }?.timeMs
         val newTape = tape != null && tape > lastTapeMs
-        if (newTape) lastTapeMs = tape!!
-        mood.music(layers.size, newTape, state.raining)
+        if (newTape) { lastTapeMs = tape!!; recoverTo = maxOf(prevLayers, layers.size); Log.i(TAG, "장면: 테이프스톱(레이어 $prevLayers → ${layers.size})") }
+        if (recoverTo > 0 && layers.size >= recoverTo) { Log.i(TAG, "장면: 회복(레이어 ${layers.size})"); recoverTo = 0 }
+        prevLayers = layers.size
+        mood.music(layers.size, newTape, state.raining, state.speedMps * 3.6f, state.turnSignal)
         debugDetail?.text = buildString {
             appendLine("속도 ${"%.1f".format(state.speedMps * 3.6f)} km/h  가속 ${"%.2f".format(state.accelMps2)}  기어 ${state.gear}  브레이크 ${state.brakePressed}")
             appendLine("주행=${state.moving} 정속=${state.cruising} 방향지시등=${state.turnSignal} 비=${state.raining} 혼자=${state.solo}  UX제한=$uxRestricted")
@@ -211,7 +224,7 @@ class MainActivity : ComponentActivity(), DriveController.Listener {
         // 마지막 정차의 "한 겹 추가" 장면(4초) → 굿바이(2초 동안 빛이 가라앉음) → 제안 카드·앨범
         root.postDelayed({
             if (driving) return@postDelayed
-            mood.goodbye()
+            mood.goodbye(); Log.i(TAG, "장면: 굿바이")
             root.postDelayed({
                 if (suggestBreath && !driving) showBreathOffer(album) else if (!driving && screen == Screen.MOOD) showAlbum(album)
             }, app.playdrive.ui.MoodScene.GOODBYE_MS)
@@ -233,6 +246,7 @@ class MainActivity : ComponentActivity(), DriveController.Listener {
     /** 주차 후 1분 제안 카드(정차 중에만). */
     private fun showBreathOffer(album: Album?) {
         if (driving) return
+        Log.i(TAG, "장면: 숨 고르기 제안")
         dismissOverlay()
         val card = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -254,6 +268,7 @@ class MainActivity : ComponentActivity(), DriveController.Listener {
     /** 1분 호흡: 오늘 곡을 아주 작게 + 들숨/날숨 원. 끝나면 마음 앨범으로. */
     private fun showBreath(album: Album?, frozenAtMs: Long? = null) {
         if (driving) return
+        Log.i(TAG, "장면: 호흡")
         clearPage(); screen = Screen.BREATH
         controller.setBreathMode(true)
         val frame = FrameLayout(this)
@@ -281,6 +296,7 @@ class MainActivity : ComponentActivity(), DriveController.Listener {
     /** 마음 앨범: 정사각 커버 격자 + 커버 아래 제목 한 줄. highlight = 방금 생긴 앨범(첫 칸, 은은한 테두리). */
     private fun showAlbum(highlight: Album?, banner: String? = null) {
         if (driving) return
+        Log.i(TAG, "장면: 마음 앨범")
         clearPage(); screen = Screen.ALBUM
         val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(PAD_DP), dp(20), dp(PAD_DP), 0); setBackgroundColor(0xFF0F151D.toInt()) }
         val head = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
@@ -350,6 +366,7 @@ class MainActivity : ComponentActivity(), DriveController.Listener {
     /** 앨범 상세: 큰 커버 + 제목 + 날짜 + 회고 한 줄(쓴 것은 글로, 없으면 입력칸 — 정차 중에만). */
     private fun showAlbumDetail(a: Album) {
         if (driving) return
+        Log.i(TAG, "장면: 앨범 상세")
         clearPage(); screen = Screen.ALBUM_DETAIL
         val album = controller.albums.all().find { it.id == a.id } ?: a
         val pageView = FrameLayout(this).apply { setBackgroundColor(0xFF0F151D.toInt()) }
@@ -390,6 +407,33 @@ class MainActivity : ComponentActivity(), DriveController.Listener {
         }
         page = pageView
         root.addView(pageView, FrameLayout.LayoutParams(MATCH, MATCH))
+    }
+
+    /** 설정: 화면 효과 라이브/차분(정차 중에만 열림, 다음 출발부터 적용). */
+    private fun showSettings() {
+        if (driving) return
+        clearPage(); screen = Screen.SETTINGS
+        val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(PAD_DP), dp(20), dp(PAD_DP), dp(PAD_DP)); setBackgroundColor(0xFF0F151D.toInt()) }
+        val head = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
+        head.addView(text(getString(R.string.settings_title), TITLE_SP, bold = true), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        head.addView(GlyphButton(this, 'X', "닫기").apply { setOnClickListener { showMood() } }, LinearLayout.LayoutParams(dp(TOUCH_DP), dp(TOUCH_DP)))
+        col.addView(head)
+        val cur = mood.effect
+        val row = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(0, dp(32), 0, dp(12)) }
+        row.addView(text(getString(R.string.settings_effect), BODY_SP), LinearLayout.LayoutParams(dp(220), ViewGroup.LayoutParams.WRAP_CONTENT))
+        for ((level, label) in listOf(app.playdrive.ui.EffectLevel.LIVE to R.string.settings_effect_live, app.playdrive.ui.EffectLevel.CALM to R.string.settings_effect_calm)) {
+            row.addView(button(getString(label), primary = level == cur) { saveEffect(level); showSettings() }.apply { contentDescription = "${getString(R.string.settings_effect)} ${getString(label)}" })
+        }
+        col.addView(row)
+        page = col
+        root.addView(col, FrameLayout.LayoutParams(MATCH, MATCH))
+    }
+
+    private fun loadEffect() = runCatching { app.playdrive.ui.EffectLevel.valueOf(getSharedPreferences("settings", MODE_PRIVATE).getString("effect", null) ?: "LIVE") }.getOrDefault(app.playdrive.ui.EffectLevel.LIVE)
+
+    private fun saveEffect(level: app.playdrive.ui.EffectLevel) {
+        getSharedPreferences("settings", MODE_PRIVATE).edit().putString("effect", level.name).apply()
+        mood.effect = level
     }
 
     /** 한국어 줄바꿈을 글자 단위가 아니라 어절(구) 단위로(API 33+). */
@@ -444,9 +488,10 @@ class MainActivity : ComponentActivity(), DriveController.Listener {
      *  --es debug demo | real | stop
      *  --es debug screen:mood | screen:drive | screen:park | screen:breath | screen:album | screen:detail[:n] | screen:debug
      *  --es debug seed:albums   (기존 앨범을 모두 지우고 예시 앨범 6장 생성, 기기 안에만)
-     *  --es debug icon:debug:off|on, icon:demo:off|on   (무드 화면의 디버그·데모 버튼 숨김 — 스크린샷·영상용)
+     *  --es debug icon:debug:off|on, icon:demo:off|on   (무드 화면의 디버그·데모·설정 버튼 숨김 — 스크린샷·영상용)
+     *  --es debug effect:live|calm   (주행 중 화면 효과, 설정과 같음) / screen:settings
      *  --es debug welcome | goodbye | wake | daypart:MORNING|DAY|EVENING|NIGHT|DAWN|auto | rain:on|off | render:1.0|0.5|canvas
-     *  --es debug rec:audio:on|off   (앱 소리를 files/demo_audio.wav로 — 시연 영상용)
+     *  --es debug record:start|stop (= rec:audio:on|off)   앱 최종 믹스를 files/demo_audio.wav(32bit float 48kHz)로 — 시연 영상용
      *  --es debug layers:PAD,BASS,...  /  cue:TAPE_STOP|SCRATCH  /  fx:TapeStop|LowpassDip|PitchWobble
      */
     private fun handleDebugIntent(intent: Intent) = debugCommands(intent).forEach { runDebugCommand(it) }
@@ -476,6 +521,9 @@ class MainActivity : ComponentActivity(), DriveController.Listener {
                 controller.albums.all().getOrNull(cmd.removePrefix("screen:detail:").toIntOrNull() ?: 0)?.let { showAlbumDetail(it) }
             }
             cmd == "screen:debug" -> showDebug()
+            cmd == "screen:settings" -> { simMoving = false; applyDrivingPolicy(); dismissOverlay(); showSettings() }
+            cmd == "effect:live" -> saveEffect(app.playdrive.ui.EffectLevel.LIVE)
+            cmd == "effect:calm" -> saveEffect(app.playdrive.ui.EffectLevel.CALM)
             cmd == "welcome" -> { mood.welcome() }
             cmd == "goodbye" -> { mood.goodbye() }
             cmd == "wake" -> { mood.wake() }
@@ -497,11 +545,11 @@ class MainActivity : ComponentActivity(), DriveController.Listener {
             cmd == "icon:demo:off" -> { demoIcon = false; updateMoodIcons() }     // 스크린샷용
             cmd == "icon:demo:on" -> { demoIcon = true; updateMoodIcons() }
             cmd == "seed:albums" -> seedAlbums()
-            cmd == "rec:audio:on" -> { // 시연 영상용: 앱 소리를 WAV로(에뮬레이터 화면 녹화엔 앱 소리가 안 담김) — tools/record_demo.sh
+            cmd == "rec:audio:on" || cmd == "record:start" -> { // 시연 영상용: 앱 소리를 WAV로(에뮬레이터 화면 녹화엔 앱 소리가 안 담김) — tools/record_demo.sh
                 val dir = filesDir  // 꺼낼 때: adb exec-out run-as app.playdrive --user <사용자> cat files/demo_audio.wav
                 controller.startAudioTap(java.io.File(dir, "demo_audio.wav"))?.let { Log.i(TAG, "audio tap: $it") }
             }
-            cmd == "rec:audio:off" -> {
+            cmd == "rec:audio:off" || cmd == "record:stop" -> {
                 val start = controller.stopAudioTap()
                 val dir = filesDir  // 꺼낼 때: adb exec-out run-as app.playdrive --user <사용자> cat files/demo_audio.wav
                 java.io.File(dir, "demo_audio.txt").writeText("startEpochMs=$start\n")
@@ -590,7 +638,7 @@ class MainActivity : ComponentActivity(), DriveController.Listener {
     companion object {
         private const val TAG = "PlayDrive.UI"
         /** 릴리스 빌드에서도 받는 인텐트 명령(심사·시연용). */
-        private val RELEASE_CMDS = setOf("demo", "seed:albums", "icon:demo:off", "icon:demo:on")
+        private val RELEASE_CMDS = setOf("demo", "seed:albums", "icon:demo:off", "icon:demo:on", "effect:live", "effect:calm")
         private const val PERM_SPEED = "android.car.permission.CAR_SPEED"
         private const val MATCH = ViewGroup.LayoutParams.MATCH_PARENT
         /** 무드 셰이더 해상도 배율(1 = 원래, 0.5 = 절반으로 그린 뒤 확대). 측정 결과로 정함(docs/dev-notes.md). */

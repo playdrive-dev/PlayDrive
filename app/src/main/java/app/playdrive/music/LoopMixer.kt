@@ -121,6 +121,18 @@ class LoopMixer(
     val activeLayers: Set<Layer>
         get() = Layer.entries.filter { target[it.ordinal] > 0f }.toSet()
 
+    // 레이어가 바뀐 격자 위치 기록(오디오 스레드가 쓰고 UI가 읽음). 화면은 "지금 들리는" 위치의 레이어를 봐야 한다
+    // (믹서는 출력 지연만큼 앞서 만들기 때문).
+    private val history = ArrayDeque<Pair<Long, Set<Layer>>>()
+
+    /** [from] ≤ 격자 위치 < [until] 사이에 레이어가 바뀐 기록(시연 녹음에서 정확한 샘플 위치를 남길 때). */
+    fun changesBetween(from: Long, until: Long): List<Pair<Long, Set<Layer>>> = synchronized(history) { history.filter { it.first in from until until } }
+
+    /** 격자 위치 [frame]에서 켜져 있던 레이어(기록이 없으면 현재 값). */
+    fun activeLayersAt(frame: Long): Set<Layer> = synchronized(history) {
+        history.lastOrNull { it.first <= frame }?.second ?: activeLayers
+    }
+
     val availableLayers: Set<Layer> = Layer.entries.filter { pcm[it.ordinal] != null }.toSet()
     val availableCues: Set<Cue> = cues.keys
 
@@ -301,11 +313,16 @@ class LoopMixer(
     }
 
     private fun applyDue() {
+        var changed = false
         val it = pending.iterator()
         while (it.hasNext()) {
             val p = it.next()
-            if (p.atFrame <= gridFrame) { target[p.layer] = if (p.on) 1f else 0f; fastIn[p.layer] = p.on && p.fast; it.remove() }
+            if (p.atFrame <= gridFrame) {
+                if (!changed) synchronized(history) { if (history.isEmpty()) history.addLast(0L to activeLayers) }   // 첫 변화 직전 상태
+                target[p.layer] = if (p.on) 1f else 0f; fastIn[p.layer] = p.on && p.fast; it.remove(); changed = true
+            }
         }
+        if (changed) synchronized(history) { history.addLast(gridFrame to activeLayers); while (history.size > 64) history.removeFirst() }
     }
 
     private fun updateLowpass() {

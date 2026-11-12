@@ -1,6 +1,11 @@
 <resources>
     <string name="app_name">PlayDrive</string>
     <string name="demo_drive">데모 드라이브</string>
+    <!-- 설정 (정차 중에만) -->
+    <string name="settings_title">설정</string>
+    <string name="settings_effect">화면 효과</string>
+    <string name="settings_effect_live">라이브</string>
+    <string name="settings_effect_calm">차분</string>
     <!-- 주차 후 1분 (정차 중에만 표시) -->
     <string name="breath_offer_title">도착했어요. 1분만 숨 고르고 갈까요?</string>
     <string name="breath_offer_body">오늘 드라이브의 곡을 작게 틀어 두고, 원에 맞춰 천천히 들이쉬고 내쉬어요.</string>

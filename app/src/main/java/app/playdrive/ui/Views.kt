@@ -151,6 +151,13 @@ class GlyphButton(context: Context, private val glyph: Char, desc: String, priva
             'D' -> { p.style = Paint.Style.FILL; for (k in -1..1) c.drawCircle(cx + k * u, cy, s * 0.03f, p) }
             'X' -> { c.drawLine(cx - u, cy - u, cx + u, cy + u, p); c.drawLine(cx + u, cy - u, cx - u, cy + u, p) }
             '<' -> { c.drawLine(cx + u * 0.4f, cy - u, cx - u * 0.6f, cy, p); c.drawLine(cx - u * 0.6f, cy, cx + u * 0.4f, cy + u, p) }
+            'S' -> { // 설정: 가로 슬라이더 세 줄 + 손잡이
+                for ((k, knob) in listOf(-1 to -0.4f, 0 to 0.45f, 1 to -0.05f)) {
+                    val y = cy + k * u * 0.75f
+                    c.drawLine(cx - u, y, cx + u, y, p)
+                    p.style = Paint.Style.FILL; c.drawCircle(cx + knob * u, y, s * 0.045f, p); p.style = Paint.Style.STROKE
+                }
+            }
         }
     }
 }

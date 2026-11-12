@@ -46,6 +46,20 @@ data class MoodFrame(
     val mainGain: Float = 1f,
     /** 물방울 세기 0~1(와이퍼 ON/OFF 때 2초 페이드). */
     val rainAmount: Float = if (rain) 1f else 0f,
+    // ---- LIVE 효과([LiveMotion]). 정차 중·CALM에선 기본값
+    /** 테이프스톱으로 가라앉은 정도 0~1(화면 어두워짐 + 빛이 아래로). */
+    val sink: Float = 0f,
+    /** 속도 색 0~1(채도·밝기 최대 +15%). */
+    val heat: Float = 0f,
+    /** 악기 빛(레이어마다 하나)의 켜짐 정도. 비어 있으면 없음. */
+    val liveLights: List<Float> = emptyList(),
+    /** 드롭 물결 진행 0~1(없으면 -1). */
+    val ripple: Float = -1f,
+    /** 깜빡이 가장자리 번짐 0~1. */
+    val edgeL: Float = 0f,
+    val edgeR: Float = 0f,
+    /** 킥에 맞춘 물방울 반짝임 0~1. */
+    val sparkle: Float = 0f,
 )
 
 /**
@@ -97,21 +111,27 @@ class MoodScene(
     /** 정차 중에는 계속 다시 그려야 한다(느린 움직임). 주행 중에는 다시 그릴 필요가 없다(이벤트 전환 중만 [animatingAt]). */
     val animating: Boolean get() = !restricted
 
-    // ---- 주행 중 이벤트 반응
+    // ---- 주행 중 화면 효과: LIVE([LiveMotion], 음악에 맞춰 반응) / CALM([DriveMotion], 이벤트 때만 한 번)
+    /** 효과 강도. 다음 주행(출발)부터 적용된다. */
+    var effect: EffectLevel = EffectLevel.LIVE
     private var drive: DriveMotion? = null
+    private var live: LiveMotion? = null
+    private var liveOut = LiveMotion.Out()
     private var lastLayers = 0
-    private var exitFrom = DriveMotion.NEUTRAL.copy(rain = 0f)
+    private var exitFrom = LiveMotion.Out()
+    private var exitLive = false
     private var exitStart = Long.MIN_VALUE / 2
 
-    /** 지금 프레임을 계속 다시 그려야 하는지(정차 중, 또는 주행 중 이벤트 전환 중). */
-    fun animatingAt(nowMs: Long) = !restricted || drive?.transitioning(nowMs) == true
+    /** 지금 프레임을 계속 다시 그려야 하는지(정차 중, LIVE 주행 중, 또는 CALM 주행 중 전환 중). */
+    fun animatingAt(nowMs: Long) = !restricted || live != null || drive?.transitioning(nowMs) == true
 
     /**
-     * 음악 이벤트(주행 중 반응용). 정차 중에도 레이어 수는 기억해 둔다(출발 순간 기준).
+     * 음악 이벤트·차량 신호(주행 중 반응용, 약 4Hz). 정차 중에도 레이어 수는 기억해 둔다(출발 순간 기준).
      * tapeStop = 이번에 새로 난 테이프스톱(급제동·급가속).
      */
-    fun music(layers: Int, tapeStop: Boolean, rain: Boolean, nowMs: Long) {
+    fun music(layers: Int, tapeStop: Boolean, rain: Boolean, nowMs: Long, speedKmh: Float = 0f, turn: app.playdrive.model.TurnSignal = app.playdrive.model.TurnSignal.OFF) {
         lastLayers = layers
+        live?.input(speedKmh, turn, rain, layers, tapeStop)
         val d = drive ?: return
         if (tapeStop) d.tapeStop()
         d.layers(layers); d.rain(rain)
@@ -137,13 +157,16 @@ class MoodScene(
             masterFrom = 1f; masterTo = 1f; masterStart = Long.MIN_VALUE / 2
             exitStart = Long.MIN_VALUE / 2
             frozenAt = nowMs
-            drive = DriveMotion(initialRain = to.rain, initialLayers = lastLayers)
+            when (effect) {
+                EffectLevel.LIVE -> live = LiveMotion(nowMs, lastLayers, to.rain).also { liveOut = it.step(nowMs, null) }
+                EffectLevel.CALM -> drive = DriveMotion(initialRain = to.rain, initialLayers = lastLayers)
+            }
             return
         }
-        // 정차: 주행 중 반응(크기·밝기·물방울)을 보관한 음악 상태와 함께 3초에 걸쳐 정차 모습으로
-        val d = drive!!
-        exitFrom = d.values(nowMs)
-        drive = null
+        // 정차: 주행 중 반응(크기·밝기·물방울·LIVE 효과)을 보관한 음악 상태와 함께 3초에 걸쳐 정차 모습으로
+        exitLive = live != null
+        exitFrom = live?.let { liveOut } ?: drive!!.values(nowMs).let { LiveMotion.Out(gain = it.gain, scale = it.scale, rain = it.rain) }
+        drive = null; live = null
         pausedTotal += nowMs - frozenAt!!
         frozenAt = null
         val t = st(nowMs)
@@ -232,7 +255,7 @@ class MoodScene(
     /**
      * beatPhase = 지금 박 안의 위치(0~1, 박 머리 = 0), 음악이 쉬면 null. 주행 중에는 무시한다(1로 고정).
      */
-    fun frame(nowMs: Long, beatPhase: Float? = null): MoodFrame {
+    fun frame(nowMs: Long, beatPhase: Float? = null, beat: Beat? = null): MoodFrame {
         val t = st(nowMs)
         val s = moodAt(t)
         val phase = breathPhase(nowMs)
@@ -248,17 +271,24 @@ class MoodScene(
         val c = cover
         val inReveal = c != null && revealFrom < c.layers.size && t >= revealStart && t - revealStart < REVEAL_MS
         val pulse = if (restricted) 1f else beatPhase?.let { pulseShape(it) } ?: 1f
-        // 주행 중 = 이벤트 반응 값, 정차 직후 3초 = 그 값에서 1로, 그 외 = 1
-        val d = drive
-        val dv = when {
-            d != null -> d.values(nowMs)
+        // 주행 중 = LIVE 효과 또는 CALM 이벤트 반응, 정차 직후 3초 = 그 값에서 기본으로, 그 외 = 기본
+        val d = drive; val lv = live
+        var liveLights = emptyList<Float>()
+        val fx: LiveMotion.Out = when {
+            lv != null -> lv.step(nowMs, beat ?: Beat(beatPhase)).also { liveOut = it; liveLights = it.lights }
+            d != null -> d.values(nowMs).let { LiveMotion.Out(gain = it.gain, scale = it.scale, rain = it.rain) }
             else -> {
                 val k = smooth(((t - exitStart).toFloat() / fadeMs).coerceIn(0f, 1f))
                 val baseRain = if (s.rain) 1f else 0f
-                DriveMotion.Values(lerp(exitFrom.scale, 1f, k), lerp(exitFrom.gain, 1f, k), if (k >= 1f) baseRain else lerp(exitFrom.rain, baseRain, k))
+                val e = exitFrom
+                if (exitLive && k < 1f) liveLights = e.lights.map { it * (1f - k) }
+                LiveMotion.Out(
+                    gain = lerp(e.gain, 1f, k), scale = lerp(e.scale, 1f, k), rain = if (k >= 1f) baseRain else lerp(e.rain, baseRain, k),
+                    sink = e.sink * (1f - k), heat = e.heat * (1f - k), edgeL = e.edgeL * (1f - k), edgeR = e.edgeR * (1f - k),
+                )
             }
         }
-        val rainOn = if (d != null) dv.rain > 0.5f else s.rain
+        val rainOn = if (d != null || lv != null) fx.rain > 0.5f else s.rain
         val dayK = ((t - dayStart).toFloat() / DAY_FADE_MS).coerceIn(0f, 1f)
         return MoodFrame(
             bg, circles, tone, withAlpha(tone, 70), amp, phase, rainOn,
@@ -273,7 +303,8 @@ class MoodScene(
             master = masterAt(t),
             pulse = pulse,
             timeSec = ((t - origin).mod(LOOP_MS)).toFloat() / 1000f,
-            mainScale = dv.scale, mainGain = dv.gain, rainAmount = dv.rain,
+            mainScale = fx.scale, mainGain = fx.gain, rainAmount = fx.rain,
+            sink = fx.sink, heat = fx.heat, liveLights = liveLights, ripple = fx.ripple, edgeL = fx.edgeL, edgeR = fx.edgeR, sparkle = fx.sparkle,
         )
     }
 

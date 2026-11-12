@@ -37,3 +37,6 @@ __pycache__/
 
 # 시연 영상 녹화 결과(tools/record_demo.sh)
 demo_out/
+
+# 시연 영상 원본(tools/record_demo.sh) — git에 올리지 않음
+docs/demo/

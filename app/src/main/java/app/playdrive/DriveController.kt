@@ -150,12 +150,29 @@ class DriveController(context: Context, private val listener: Listener) {
     }
 
     /** 지금 박 안의 위치(0~1). 음악이 쉬거나 베이스·드럼이 없으면 null. UI 스레드에서 읽어도 된다. */
+    /** 지금 들리는 격자 위치 = 믹서 위치 − 출력 지연(화면이 소리보다 먼저 튀지 않게). */
+    private fun audibleFrame(m: LoopMixer) = (audio?.audibleGridFrame() ?: (m.gridFrame - (audio?.latencyFrames ?: 0L))).coerceIn(0L, m.gridFrame)
+
     fun beatPhase(): Float? {
         val m = mixer ?: return null
         if (!playing) return null
-        val a = m.activeLayers
+        val f = audibleFrame(m)
+        val a = m.activeLayersAt(f)
         if (Layer.DRUMS !in a && Layer.BASS !in a) return null
-        return (m.gridFrame % timing.beatFrames).toFloat() / timing.beatFrames
+        return (f % timing.beatFrames).toFloat() / timing.beatFrames
+    }
+
+    /** 주행 중 LIVE 화면 효과용: 박 위치·박 길이·드럼이 들리는지·들리는 레이어 수(오디오 믹서 기준). */
+    fun beatInfo(): app.playdrive.ui.Beat? {
+        val m = mixer ?: return null
+        val a = m.activeLayersAt(audibleFrame(m))
+        val on = playing
+        return app.playdrive.ui.Beat(
+            phase = beatPhase(),
+            beatMs = timing.beatFrames * 1000f / timing.sampleRate,
+            drums = on && Layer.DRUMS in a,
+            layers = if (on) a.size else 0,
+        )
     }
 
     /** '주차 후 1분' 동안 오늘의 곡을 아주 작게(keys+synth 그대로, 마스터만 낮춤). */
@@ -197,7 +214,7 @@ class DriveController(context: Context, private val listener: Listener) {
             val list = recent.toList()
             val layers = director.layers
             val a = audio
-            val dbg = "stage=${director.stage} 렌더부하=${"%.1f".format(a?.renderLoadPercent ?: 0f)}% underrun=${a?.underruns ?: 0}"
+            val dbg = "stage=${director.stage} 렌더부하=${"%.1f".format(a?.renderLoadPercent ?: 0f)}% underrun=${a?.underruns ?: 0} 출력지연=${(a?.latencyFrames ?: 0) * 1000 / timing.sampleRate}ms"
             if (now - lastDbgLogMs >= 5_000) { lastDbgLogMs = now; Log.i(TAG, "상태 v=${"%.1f".format(state.speedMps * 3.6f)}km/h layers=$layers $dbg") }
             main.post { listener.onUpdate(state, list, layers, dbg) }
         }

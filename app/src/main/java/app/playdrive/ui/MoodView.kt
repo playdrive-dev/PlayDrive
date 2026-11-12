@@ -44,6 +44,14 @@ class MoodView(context: Context, val renderScale: Float = 1f, forceCanvas: Boole
     /** 박 안 위치(0~1) 또는 음악이 쉬면 null. 정차 중 메인 빛 숨쉬기에 쓴다. */
     var beatSource: () -> Float? = { null }
 
+    /** 주행 중 LIVE 효과용 박 정보(박 위치·박 길이·드럼·들리는 레이어 수). */
+    var beatInfo: () -> Beat? = { null }
+
+    /** 주행 중 화면 효과 강도. 다음 출발부터 적용. */
+    var effect: EffectLevel
+        get() = scene.effect
+        set(v) { scene.effect = v }
+
     /** 유리 패널(재생·앨범 버튼 뒤, 이 뷰 기준 픽셀). */
     var glass: List<LightParams.Glass> = emptyList()
         set(v) { if (v != field) { field = v; redraw(force = true) } }
@@ -78,13 +86,13 @@ class MoodView(context: Context, val renderScale: Float = 1f, forceCanvas: Boole
             if (v == scene.restricted) return
             scene.setRestricted(v, now())
             removeCallbacks(driveTick)
-            animating.value = !v
+            animating.value = scene.animatingAt(now())   // LIVE면 주행 중에도 프레임 루프
             redraw(force = true)
         }
 
     /** 음악 이벤트(레이어 수, 새 테이프스톱, 비). 주행 중이면 이벤트 반응 전환을 시작하거나 다음 가능 시각으로 미룬다. */
-    fun music(layers: Int, tapeStop: Boolean, rain: Boolean) {
-        scene.music(layers, tapeStop, rain, now())
+    fun music(layers: Int, tapeStop: Boolean, rain: Boolean, speedKmh: Float = 0f, turn: app.playdrive.model.TurnSignal = app.playdrive.model.TurnSignal.OFF) {
+        scene.music(layers, tapeStop, rain, now(), speedKmh, turn)
         if (scene.restricted) scheduleDrive()
     }
 
@@ -113,7 +121,14 @@ class MoodView(context: Context, val renderScale: Float = 1f, forceCanvas: Boole
     fun wake() { scene.wake(now()); redraw() }
 
     /** 지금 그릴 프레임. */
-    fun currentFrame(): MoodFrame = scene.frame(now(), if (scene.restricted) null else beatSource())
+    private var drumsWas = false
+
+    fun currentFrame(): MoodFrame {
+        if (!scene.restricted) return scene.frame(now(), beatSource())
+        val b = beatInfo()
+        if (b != null && b.drums != drumsWas) { drumsWas = b.drums; if (b.drums) android.util.Log.i("PlayDrive.Mood", "장면: 드럼 들어옴(드롭)") }
+        return scene.frame(now(), null, b)
+    }
 
     private fun redraw(force: Boolean = false) {
         if (scene.restricted && !force) return

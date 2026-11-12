@@ -22,9 +22,9 @@ import kotlin.math.sqrt
  * 좌표: p = 픽셀 / 높이 → y 0~1(위→아래), x 0~가로세로비.
  */
 object LightParams {
-    const val MAX_LIGHTS = 8
+    const val MAX_LIGHTS = 14
     const val MAX_SCARS = 4
-    const val MAX_GLASS = 3
+    const val MAX_GLASS = 4
 
     /**
      * 시간대 색온도(sRGB 0~1): 위, 아래, 바닥 반사 띠 근처 빛.
@@ -110,19 +110,21 @@ object LightParams {
         val s = fr.mood
         // 메인 빛: 화면 중앙보다 약간 위. 10초·12초 주기의 아주 느린 흔들림과 크기 숨쉬기.
         val tone = AlbumNaming.lerpColor(0xFFE59A5C.toInt(), 0xFF6CC3B5.toInt(), s.calm)
-        val mainColor = mix(f(1f, 0.87f, 0.72f), rgb(tone), 0.55f)
+        val heatK = 1f + 0.15f * fr.heat   // LIVE 속도 색: 채도·밝기 최대 +15%
+        val mainColor = saturate(mix(f(1f, 0.87f, 0.72f), rgb(tone), 0.55f), heatK)
         val bloomIn = 0.55f + 0.45f * fr.master
+        val sinkY = 0.06f * fr.sink        // LIVE 테이프스톱: 빛이 아래로 가라앉음
         // mainScale·mainGain = 주행 중 이벤트 반응(DriveMotion), 정차 중엔 1
         val mainR = 0.14f * (1f + 0.45f * s.energy) * (1f + 0.025f * tau(t, 12f)) * bloomIn * fr.mainScale
-        val mainI = (0.55f + 0.25f * s.brightness + 0.2f * s.energy) * fr.pulse * fr.moodAlpha.coerceAtLeast(0.55f) * fr.mainGain
-        val main = f(aspect / 2 + 0.012f * tau(t, 10f), 0.40f + 0.008f * tau(t + 2.5f, 12f), mainR, mainI)
+        val mainI = (0.55f + 0.25f * s.brightness + 0.2f * s.energy) * fr.pulse * fr.moodAlpha.coerceAtLeast(0.55f) * fr.mainGain * (1f + 0.15f * fr.heat)
+        val main = f(aspect / 2 + 0.012f * tau(t, 10f), 0.40f + 0.008f * tau(t + 2.5f, 12f) + sinkY, mainR, mainI)
 
         // 보조 빛: 깊은 곳의 은은한 빛 2개 + 오늘 커버의 겹(최근 6개, 오래된 겹일수록 깊이)
         val lights = FloatArray(MAX_LIGHTS * 4); val cols = FloatArray(MAX_LIGHTS * 4)
         var n = 0
         fun add(x: Float, y: Float, r: Float, depth: Float, c: FloatArray, a: Float) {
             if (n >= MAX_LIGHTS) return
-            lights[n * 4] = x; lights[n * 4 + 1] = y; lights[n * 4 + 2] = r; lights[n * 4 + 3] = depth
+            lights[n * 4] = x; lights[n * 4 + 1] = y + sinkY * 0.7f; lights[n * 4 + 2] = r; lights[n * 4 + 3] = depth
             cols[n * 4] = c[0]; cols[n * 4 + 1] = c[1]; cols[n * 4 + 2] = c[2]; cols[n * 4 + 3] = a; n++
         }
         val gain = 0.55f + 0.45f * fr.bright
@@ -146,6 +148,13 @@ object LightParams {
                 if (i >= fr.revealFrom && k < 1f) { ring[0] = ox + l.x * side; ring[1] = oy + l.y * side; ring[2] = l.r * side * (0.8f + 0.5f * k); ring[3] = (1f - k) * 0.9f }
             }
         }
+        // LIVE 악기 빛: 들리는 레이어마다 하나씩, 메인 빛 둘레의 정해진 자리에서 은은하게 켜짐
+        fr.liveLights.forEachIndexed { i, k ->
+            if (k <= 0.001f) return@forEachIndexed
+            val (dx, dy) = INSTRUMENT_POS[i % INSTRUMENT_POS.size]
+            val c = mix(mix(pal.horizon, mainColor, 0.35f + 0.1f * i), f(1f, 0.92f, 0.8f), 0.25f)
+            add(aspect / 2 + dx * aspect, 0.40f + dy, (0.035f + 0.006f * (i % 3)) * bloomIn * (0.7f + 0.3f * k), 0.25f + 0.08f * (i % 4), c, 0.42f * k)
+        }
         if (n < 3) add(aspect * 0.66f + 0.008f * tau(t + 7f, 10f), 0.60f, 0.05f * bloomIn, 0.35f, mainColor, 0.22f * gain)
 
         val g = FloatArray(MAX_GLASS * 4); val gr = FloatArray(4)
@@ -166,8 +175,22 @@ object LightParams {
             // 물방울 배치는 고정(0.85), 나타나고 사라지는 건 rainAlpha로 페이드(와이퍼 ON/OFF 2초)
             "rain" to f(if (fr.rainAmount > 0f) 0.85f else 0f), "rainAlpha" to f(fr.rainAmount), "rainSeed" to f(3f),
             "glass" to g, "glassRad" to gr, "glassCount" to f(glass.size.coerceAtMost(MAX_GLASS).toFloat()),
-            "master" to f(fr.master),
-        )
+            "master" to f(fr.master * (1f - 0.35f * fr.sink)),
+            "ripple" to f(aspect / 2, fr.ripple.coerceAtLeast(0f), 0.022f, if (fr.ripple >= 0f) 1f else 0f),
+            "sideGlow" to f(fr.edgeL, fr.edgeR), "sparkle" to f(fr.sparkle),
+        ).also { u -> if (fr.heat > 0f) for (k in listOf("bgTop", "bgBottom")) u[k]?.let { lch -> u[k] = f((lch[0] * (1f + 0.08f * fr.heat)).coerceAtMost(0.98f), lch[1] * heatK, lch[2]) } }
+    }
+
+    /** 악기 빛 자리(메인 빛 기준, x는 화면 비율·y는 높이 비율). 위·옆으로 둥글게 둘러쌈. */
+    private val INSTRUMENT_POS = listOf(
+        -0.17f to -0.10f, 0.18f to -0.14f, -0.27f to 0.06f, 0.29f to 0.03f, -0.07f to -0.24f, 0.10f to 0.17f,
+    )
+
+    /** 채도를 k배(밝기 축은 그대로). */
+    private fun saturate(c: FloatArray, k: Float): FloatArray {
+        if (k == 1f) return c
+        val l = 0.299f * c[0] + 0.587f * c[1] + 0.114f * c[2]
+        return FloatArray(3) { (l + (c[it] - l) * k).coerceIn(0f, 1f) }
     }
 
     /** 마음 앨범 커버(정사각형). 부드러움 = 빛의 크기·선명도, 비 = 물방울, 테이프스톱 = 빛이 흐트러진 자국, 시간대 = 색온도. */
@@ -202,6 +225,7 @@ object LightParams {
             "rain" to f((c.rainLines / 20f).coerceIn(0f, 1f)), "rainAlpha" to f(1f), "rainSeed" to f((c.id % 997).toFloat()),
             "glass" to FloatArray(MAX_GLASS * 4), "glassRad" to FloatArray(4), "glassCount" to f(0f),
             "master" to f(1f),
+            "ripple" to FloatArray(4), "sideGlow" to FloatArray(2), "sparkle" to f(0f),
         )
     }
 
