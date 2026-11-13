@@ -5,7 +5,7 @@ import android.os.Build
 import androidx.annotation.RequiresApi
 
 /**
- * 빛을 재료로 쓰는 화면(AGSL, API 33+). 무드 화면과 마음 앨범 커버가 같은 셰이더를 쓴다(coverMode).
+ * 빛을 재료로 쓰는 화면(AGSL, API 33+). 무드 화면과 드라이브 앨범 커버가 같은 셰이더를 쓴다(coverMode).
  *
  * 뒤 → 앞:
  *  1) 시간대 색온도 그라데이션(OKLCh 보간 — 노을 중간이 탁해지지 않게) + 바닥 반사 띠 근처의 옅은 빛 + 아침 햇빛
@@ -26,6 +26,7 @@ uniform float coverMode;
 uniform float3 bgTop;
 uniform float3 bgBottom;
 uniform float3 horizon;
+uniform float4 band;      // 지평선 근처 얇은 색 띠(rgb, 두께). 두께 0이면 없음
 uniform float4 mainLight;
 uniform float3 mainColor;
 uniform float calm;
@@ -103,6 +104,7 @@ float3 sceneCol(float2 p, float blur) {
     float3 bg = bgCol(p);
     float hz = (p.y - bandY) / 0.20;
     bg += horizon * exp(-hz * hz) * 0.14;
+    if (band.w > 0.0) { float bz = (p.y - bandY + band.w * 0.6) / band.w; bg = mix(bg, band.rgb, 0.72 * exp(-bz * bz)); }  // 색을 더하지 않고 섞는다(남색 위에서도 주황으로 보이게)
 
     // 느린 흩어짐: 600초에 한 바퀴 도는 원 위에서 노이즈를 읽는다(순환해도 이어짐)
     float2 drift = 0.6 * float2(cos(TAU * iTime / 600.0), sin(TAU * iTime / 600.0));

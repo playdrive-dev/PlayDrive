@@ -30,15 +30,17 @@ object LightParams {
      * 시간대 색온도(sRGB 0~1): 위, 아래, 바닥 반사 띠 근처 빛.
      * sun = 햇빛 하이라이트(x = 가로 비율 0~1, y, 반지름, 세기), sunCol = 그 색. 세기 0이면 없음.
      */
-    data class Palette(val top: FloatArray, val bottom: FloatArray, val horizon: FloatArray, val sun: FloatArray = FloatArray(4), val sunCol: FloatArray = FloatArray(3))
+    data class Palette(val top: FloatArray, val bottom: FloatArray, val horizon: FloatArray, val sun: FloatArray = FloatArray(4), val sunCol: FloatArray = FloatArray(3),
+                       /** 지평선(바닥 빛 띠) 바로 위의 얇은 색 띠: r, g, b, 두께(화면 높이 비율). 바탕에 최대 72% 섞는다. 두께 0이면 없음. */
+                       val band: FloatArray = FloatArray(4))
 
     fun palette(p: PartOfDay): Palette = when (p) {
         PartOfDay.DAWN -> Palette(f(0.07f, 0.075f, 0.15f), f(0.02f, 0.025f, 0.05f), f(0.30f, 0.22f, 0.42f))
         // 옅은 청회색 + 오른쪽 위 옅은 금빛 햇빛
         PartOfDay.MORNING -> Palette(f(0.30f, 0.35f, 0.40f), f(0.11f, 0.14f, 0.17f), f(0.55f, 0.60f, 0.64f), f(0.94f, 0.0f, 0.34f, 0.85f), f(1.0f, 0.83f, 0.50f))
         PartOfDay.DAY -> Palette(f(0.06f, 0.26f, 0.30f), f(0.02f, 0.10f, 0.13f), f(0.30f, 0.62f, 0.62f))       // 맑은 청록
-        // 노을: 위 깊은 남보라 #1c1640 → 아래 맑은 앰버 #c8783a (OKLCh 보간 → 중간이 탁한 갈색 대신 장밋빛)
-        PartOfDay.EVENING -> Palette(rgb(0x1C1640), rgb(0xC8783A), f(1.0f, 0.62f, 0.32f))
+        // 노을: 남색 중심(위 #0E1A3A → 아래 #1F2F5C), 주황은 지평선 근처 얇은 띠(#C9805A)로만. 보조 빛은 옅은 남청색.
+        PartOfDay.EVENING -> Palette(rgb(0x0E1A3A), rgb(0x1F2F5C), rgb(0x8C9BD6), band = rgb(0xC9805A).let { f(it[0], it[1], it[2], 0.045f) })
         PartOfDay.NIGHT -> Palette(f(0.025f, 0.04f, 0.09f), f(0.004f, 0.007f, 0.018f), f(0.12f, 0.16f, 0.32f)) // 깊은 남색-검정
     }
 
@@ -193,7 +195,7 @@ object LightParams {
         return FloatArray(3) { (l + (c[it] - l) * k).coerceIn(0f, 1f) }
     }
 
-    /** 마음 앨범 커버(정사각형). 부드러움 = 빛의 크기·선명도, 비 = 물방울, 테이프스톱 = 빛이 흐트러진 자국, 시간대 = 색온도. */
+    /** 드라이브 앨범 커버(정사각형). 부드러움 = 빛의 크기·선명도, 비 = 물방울, 테이프스톱 = 빛이 흐트러진 자국, 시간대 = 색온도. */
     fun cover(c: CoverSpec, side: Float, tz: TimeZone = TimeZone.getDefault()): Map<String, FloatArray> {
         val pal = palette(partOf(c.id, tz))
         val lights = FloatArray(MAX_LIGHTS * 4); val cols = FloatArray(MAX_LIGHTS * 4)
@@ -230,13 +232,19 @@ object LightParams {
     }
 
     private fun mix3(a: Palette, b: Palette, k: Float) =
-        Palette(mix(a.top, b.top, k), mix(a.bottom, b.bottom, k), mix(a.horizon, b.horizon, k), mix(a.sun, b.sun, k).also { it[0] = if (a.sun[3] > 0f) a.sun[0] else b.sun[0]; it[1] = if (a.sun[3] > 0f) a.sun[1] else b.sun[1]; it[2] = if (a.sun[3] > 0f) a.sun[2] else b.sun[2] }, mix(a.sunCol, b.sunCol, k))
+        Palette(mix(a.top, b.top, k), mix(a.bottom, b.bottom, k), mix(a.horizon, b.horizon, k), mix(a.sun, b.sun, k).also { it[0] = if (a.sun[3] > 0f) a.sun[0] else b.sun[0]; it[1] = if (a.sun[3] > 0f) a.sun[1] else b.sun[1]; it[2] = if (a.sun[3] > 0f) a.sun[2] else b.sun[2] }, mix(a.sunCol, b.sunCol, k), mixBand(a.band, b.band, k))
+
+    /** 띠: 색은 섞고, 두께는 있는 쪽 것(없는 쪽은 세기 0으로 사라짐). */
+    private fun mixBand(a: FloatArray, b: FloatArray, k: Float): FloatArray {
+        val w = if (a[3] > 0f && b[3] > 0f) a[3] + (b[3] - a[3]) * k else maxOf(a[3], b[3])
+        return f(a[0] + (b[0] - a[0]) * k, a[1] + (b[1] - a[1]) * k, a[2] + (b[2] - a[2]) * k, w)
+    }
 
     /** 바탕 uniform: 위·아래 색(OKLCh), 바닥 빛, 햇빛(x는 가로세로비로 환산). */
     private fun bg(pal: Palette, aspect: Float): Array<Pair<String, FloatArray>> {
         val (top, bottom) = gradientLch(pal.top, pal.bottom)
         return arrayOf(
-            "bgTop" to top, "bgBottom" to bottom, "horizon" to pal.horizon,
+            "bgTop" to top, "bgBottom" to bottom, "horizon" to pal.horizon, "band" to pal.band,
             "sun" to f(pal.sun[0] * aspect, pal.sun[1], pal.sun[2], pal.sun[3]), "sunCol" to pal.sunCol,
         )
     }

@@ -41,23 +41,6 @@ class AlbumTest {
         assertTrue(c.background != AlbumNaming.cover(morning, kst).background)
     }
 
-    @Test fun `주차 후 1분 - P단 + 운전석만 착석일 때만, 동승자가 있으면 제안하지 않음`() {
-        val solo = DrivingState(gear = Gear.PARK, driverPresent = true, solo = true)
-        assertTrue(BreathCoach.shouldSuggest(solo, justFinishedDrive = true))
-        assertFalse(BreathCoach.shouldSuggest(solo.copy(solo = false), true))          // 동승자
-        assertFalse(BreathCoach.shouldSuggest(solo.copy(gear = Gear.DRIVE), true))     // P단 아님
-        assertFalse(BreathCoach.shouldSuggest(solo, justFinishedDrive = false))        // 주행 안 함
-        assertFalse(BreathCoach.shouldSuggest(solo.copy(driverPresent = false, solo = false), true))
-    }
-
-    @Test fun `호흡 - 들숨 4초 커지고 날숨 6초 작아짐, 1분 = 6회`() {
-        assertEquals(true to 0f, BreathCoach.phase(0))
-        assertEquals(true, BreathCoach.phase(3_999).first)
-        assertEquals(false to 1f, BreathCoach.phase(4_000))
-        assertEquals(0.5f, BreathCoach.phase(7_000).second, 1e-3f)
-        assertEquals(6L, BreathCoach.DURATION_MS / (BreathCoach.INHALE_MS + BreathCoach.EXHALE_MS))
-    }
-
     @Test fun `데모 주행 1회 = 앨범 1장(비 포함, P단에서 끝)`() {
         val engine = DrivingEventEngine()
         var clock = epoch(2026, 11, 10, 21)
@@ -78,7 +61,7 @@ class AlbumTest {
         assertTrue(s.movingSeconds in 40..70)
         assertTrue(s.smoothness in 0f..100f)
         assertNotNull(finalState)
-        assertTrue(BreathCoach.shouldSuggest(finalState!!, true))                     // 데모 끝 = 혼자, P단 → 제안
+        assertEquals(Gear.PARK, finalState!!.gear)                                    // 데모 끝 = P단
         assertEquals("화요일 밤, 빗속의 귀갓길", AlbumNaming.title(s, kst))
     }
 
@@ -115,8 +98,8 @@ class AlbumTest {
         assertEquals("11월 10일 화요일 · 오전 12:10", AlbumNaming.dateLine(epoch(2026, 11, 10, 0), kst))
     }
 
-    @Test fun `웰니스 표현만 - 화면 문구에 의료·치료·점수 표현이 없다`() {
-        val banned = listOf("치료", "치유", "진단", "처방", "의학", "의료", "질환", "스트레스 측정", "혈압", "심박", "점수", "스코어", "콤보", "랭킹")
+    @Test fun `화면 문구에 의료·마음수련·게임 표현이 없다`() {
+        val banned = listOf("치료", "치유", "진단", "처방", "의학", "의료", "질환", "스트레스 측정", "혈압", "심박", "점수", "스코어", "콤보", "랭킹", "마음", "호흡", "숨 고르", "명상", "회고", "힐링")
         val files = listOf(File("src/main/res/values/strings.xml")) +
             File("src/main/java/app/playdrive").walkTopDown().filter { it.name in setOf("MainActivity.kt", "Views.kt", "Album.kt") }.toList()
         assertTrue(files.all { it.exists() })

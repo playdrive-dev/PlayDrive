@@ -9,7 +9,7 @@ import kotlin.math.abs
  * 연주 기록 규칙(순수 Kotlin) — 곡(스테이지) + 라이프 게이지(남은 악기 수).
  * 원칙: **속도·시간·거리에는 보상하지 않고 부드러움에만 보상한다.** 곡 점수는 곡 안(64마디)의 값만 쓰므로 오래·빨리 달려도 같다.
  * 화면·음성 문구는 게임 용어를 쓰지 않는다(CLAUDE.md 6절): 콤보 → "이어진 마디", 퍼펙트 → "부드러운 출발/깔끔한 차선 변경/부드러운 정지",
- * 미스 → "흔들림", FAILED → "미완주"(곡) — 하루 단위 실패 표시는 없다.
+ * 미스 → "흔들림". 실패한 곡은 칩에 "FAILED"(사용자 결정), 결과 상단 문구는 부드럽게 — 하루 단위 실패 표시는 없다.
  */
 object PlayRules {
     const val G = 9.80665f
@@ -73,7 +73,8 @@ object PlayRules {
     }
 }
 
-enum class Grade(val label: String) { S("S"), A("A"), B("B"), C("C"), FAILED("미완주");
+/** 곡 등급. 실패한 곡은 칩·기록에 "FAILED"로 보인다(2026-11-13 사용자 결정 — 결과 상단 문구는 부드럽게 유지). */
+enum class Grade(val label: String) { S("S"), A("A"), B("B"), C("C"), FAILED("FAILED");
     val finished: Boolean get() = this != FAILED
     fun atLeast(g: Grade): Boolean = finished && ordinal <= g.ordinal
 }

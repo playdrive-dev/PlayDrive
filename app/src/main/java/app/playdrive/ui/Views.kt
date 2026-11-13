@@ -13,7 +13,6 @@ import android.os.SystemClock
 import android.view.View
 import android.view.animation.LinearInterpolator
 import app.playdrive.album.CoverSpec
-import app.playdrive.album.BreathCoach
 import app.playdrive.album.MoodState
 import kotlin.math.PI
 import kotlin.math.min
@@ -23,7 +22,7 @@ import kotlin.math.sin
  * (API 33 미만 대체) 운전 중 무드 화면: 단색 배경 + 추상 그래픽(겹친 원과 물결). 글자·숫자 없음.
  * 상태·시간 규칙은 [MoodScene](순수, 단위 테스트):
  * - restricted(주행 중): 기본은 정지(다시 그리지 않음). 음악 이벤트 때만 [DriveMotion] 전환(≤2초) 동안 다시 그린다.
- * - 정차 중: 원이 12초 주기로 아주 천천히 숨 쉬듯 움직이고, 주행 중 쌓인 음악 상태로 3초에 걸쳐 바뀐다.
+ * - 정차 중: 원이 12초 주기로 아주 천천히 움직이고, 주행 중 쌓인 음악 상태로 3초에 걸쳐 바뀐다.
  */
 class CanvasMoodLayer(context: Context, private val host: MoodView) : View(context) {
     private fun now() = SystemClock.uptimeMillis()
@@ -110,11 +109,13 @@ class PlayPauseButton(context: Context) : View(context) {
         set(v) { field = v; contentDescription = if (v) "일시정지" else "재생"; invalidate() }
     var glassBehind = false
         set(v) { field = v; invalidate() }
+    private val navyFill = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.argb(150, 14, 26, 58) }
     private val p = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeCap = Paint.Cap.ROUND; strokeJoin = Paint.Join.ROUND }
     init { isClickable = true; isFocusable = true; contentDescription = "재생" }
     override fun onDraw(c: Canvas) {
         val s = min(width, height).toFloat()
         val cx = width / 2f; val cy = height / 2f
+        c.drawCircle(cx, cy, s / 2, navyFill)   // 남색 반투명(뒤 빛 색이 그대로 비치지 않게)
         Glass.draw(c, cx - s / 2, cy - s / 2, cx + s / 2, cy + s / 2, s / 2, glassBehind)
         p.color = Color.argb(235, 255, 255, 255); p.strokeWidth = (s * 0.022f).coerceAtLeast(1.5f)
         val u = s * 0.15f
@@ -129,7 +130,7 @@ class PlayPauseButton(context: Context) : View(context) {
 }
 
 /**
- * 원형 아이콘 버튼(얇은 선). glyph: 'A' = 마음 앨범(재킷에서 반쯤 나온 음반), 'D' = 디버그(점 3개), 'X' = 닫기, '<' = 뒤로.
+ * 원형 아이콘 버튼(얇은 선). glyph: 'A' = 드라이브 앨범(재킷에서 반쯤 나온 음반), 'D' = 디버그(점 3개), 'X' = 닫기, '<' = 뒤로.
  * bare = 바탕 없이 아이콘만(라벨이 붙은 알약 버튼 안에서 쓸 때).
  */
 class GlyphButton(context: Context, private val glyph: Char, desc: String, private val bare: Boolean = false) : View(context) {
@@ -162,43 +163,7 @@ class GlyphButton(context: Context, private val glyph: Char, desc: String, priva
     }
 }
 
-/** 1분 호흡: 들숨 4초에 커지고 날숨 6초에 작아지는 원(정차 중에만 쓰는 화면). */
-class BreathView(context: Context, private val onPhase: (inhale: Boolean) -> Unit, private val onDone: () -> Unit) : View(context) {
-    private var start = 0L
-    private var lastInhale: Boolean? = null
-    private val p = Paint(Paint.ANTI_ALIAS_FLAG)
-    private val anim = ValueAnimator.ofFloat(0f, 1f).apply {
-        duration = BreathCoach.DURATION_MS; interpolator = LinearInterpolator()
-        addUpdateListener { invalidate() }
-        addListener(object : android.animation.AnimatorListenerAdapter() {
-            override fun onAnimationEnd(animation: android.animation.Animator) { if (!cancelled) onDone() }
-        })
-    }
-    private var cancelled = false
-    /** 스크린샷·테스트용: 특정 시점에 멈춘 모습. */
-    var frozenAtMs: Long? = null
-
-    fun begin() { start = SystemClock.elapsedRealtime(); cancelled = false; anim.start() }
-    fun cancel() { cancelled = true; anim.cancel() }
-
-    override fun onDraw(c: Canvas) {
-        val el = frozenAtMs ?: (SystemClock.elapsedRealtime() - start)
-        val (inhale, k) = BreathCoach.phase(el)
-        if (inhale != lastInhale) { lastInhale = inhale; onPhase(inhale) }
-        val e = (1 - kotlin.math.cos(PI * k).toFloat()) / 2 // 부드러운 가감속
-        c.drawColor(0xFF0F1A24.toInt())
-        val cx = width / 2f; val cy = height * 0.40f
-        val r = min(width, height) * (0.12f + 0.12f * e)
-        // 무드 화면 원과 같은 톤(청록 0x6CC3B5): 바깥 번짐 + 가장자리로 갈수록 투명해지는 몸통
-        p.shader = RadialGradient(cx, cy, r * 1.6f, 0x556CC3B5, 0x00000000, Shader.TileMode.CLAMP)
-        c.drawCircle(cx, cy, r * 1.6f, p)
-        p.shader = RadialGradient(cx, cy, r, intArrayOf(0xCC6CC3B5.toInt(), 0xB86CC3B5.toInt(), 0x006CC3B5), floatArrayOf(0f, 0.62f, 1f), Shader.TileMode.CLAMP)
-        c.drawCircle(cx, cy, r, p)
-        p.shader = null
-    }
-}
-
-/** 앨범 커버(격자·상세·호흡 화면). */
+/** 앨범 커버(격자·상세·결과 화면). */
 /** 앨범 커버: API 33+ 는 무드 화면과 같은 빛 셰이더(coverMode), 그 아래는 Canvas. */
 class CoverView(context: Context) : View(context) {
     var spec: CoverSpec? = null

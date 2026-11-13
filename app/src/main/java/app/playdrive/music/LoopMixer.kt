@@ -113,7 +113,7 @@ class LoopMixer(
     private val duckAttackStep = (1f - config.duckGain) / (config.duckAttackMs * sr / 1000f)
     private val duckReleaseStep = (1f - config.duckGain) / (0.5f * timing.barFrames)
 
-    // 음성 안내(덕킹·필터·테이프스톱 영향 없음, 마스터 음량과도 무관 — '주차 후 1분'처럼 음악이 작아도 들리게)
+    // 음성 안내(덕킹·필터·테이프스톱 영향 없음, 마스터 음량과도 무관 — 음악이 작아도 들리게)
     private val voiceQueue = ArrayDeque<StereoPcm>()
     private var voice: StereoPcm? = null
     private var voicePos = 0

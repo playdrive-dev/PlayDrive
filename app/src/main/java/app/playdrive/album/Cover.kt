@@ -46,7 +46,7 @@ object CoverArt {
             AlbumNaming.PartOfDay.DAWN -> 0xFF1B2440.toInt()
             AlbumNaming.PartOfDay.MORNING -> 0xFFF2D7B6.toInt()
             AlbumNaming.PartOfDay.DAY -> 0xFFBFD9E8.toInt()
-            AlbumNaming.PartOfDay.EVENING -> 0xFF5A3F63.toInt()
+            AlbumNaming.PartOfDay.EVENING -> 0xFF1F2F5C.toInt()   // 노을 = 남색(무드 화면과 같은 팔레트)
             AlbumNaming.PartOfDay.NIGHT -> 0xFF101826.toInt()
         }
     }
@@ -127,7 +127,7 @@ object CoverArt {
  * - 첫 출발: 새 커버(이전 겹 지움)
  * - 정차(Stopped)·주차(Parked): 지난 구간을 한 겹으로 닫는다(2초 이상 달린 구간만)
  * - 빛은 1~5개: 6번째 정차부터는 기존 빛에 합친다
- * - 주차 후에도 겹은 남아 있다 → 그대로 마음 앨범의 새 앨범 커버가 된다
+ * - 주차 후에도 겹은 남아 있다 → 그대로 드라이브 앨범의 새 앨범 커버가 된다
  */
 class CoverSketch(private val clock: () -> Long) {
     var id: Long? = null; private set

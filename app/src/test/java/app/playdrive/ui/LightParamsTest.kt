@@ -28,13 +28,14 @@ class LightParamsTest {
         }
     }
 
-    @Test fun `시간대마다 색온도가 다르다 - 아침 청회색, 낮 청록, 노을 앰버, 밤 가장 어둡게`() {
+    @Test fun `시간대마다 색온도가 다르다 - 아침 청회색, 낮 청록, 노을 남색+지평선 띠, 밤 가장 어둡게`() {
         fun lum(c: FloatArray) = 0.299f * c[0] + 0.587f * c[1] + 0.114f * c[2]
         val m = LightParams.palette(PartOfDay.MORNING); val d = LightParams.palette(PartOfDay.DAY)
         val e = LightParams.palette(PartOfDay.EVENING); val n = LightParams.palette(PartOfDay.NIGHT)
         assertTrue(kotlin.math.abs(m.top[0] - m.top[2]) < 0.15f)        // 청회색: 채도 낮음
         assertTrue(d.top[1] > d.top[0] * 3)                              // 청록
-        assertTrue(e.bottom[0] > e.bottom[2] * 2 && e.top[2] > e.top[1]) // 아래 앰버, 위 자주
+        assertTrue(e.top[2] > e.top[0] * 2 && e.bottom[2] > e.bottom[0] * 1.5f) // 노을 바탕은 남색(위·아래 모두 파랑 우세)
+        assertTrue(e.band[0] > e.band[2] * 1.4f && e.band[3] in 0.01f..0.08f)     // 주황은 지평선 근처 얇은 띠로만
         assertTrue(listOf(m, d, e).all { lum(it.top) > lum(n.top) })     // 밤이 가장 어둡다
     }
 
@@ -48,18 +49,15 @@ class LightParamsTest {
         assertEquals(0f, uc.getValue("scarCount")[0], 0f); assertEquals(1f, ub.getValue("scarCount")[0], 0f)
     }
 
-    @Test fun `노을 그라데이션 - OKLCh 보간이라 중간이 탁해지지 않는다`() {
+    @Test fun `그라데이션 - OKLCh 보간이라 끝점이 그대로 돌아오고 중간도 채도를 지킨다`() {
         val e = LightParams.palette(PartOfDay.EVENING)
         fun chroma(c: FloatArray) = LightParams.oklch(c)[1]
         val mid = LightParams.gradientAt(e.top, e.bottom, 0.5f)
-        val srgbMid = FloatArray(3) { (e.top[it] + e.bottom[it]) / 2 }
-        // 양 끝 채도의 평균에 가깝게 유지(단순 sRGB 섞기는 크게 떨어진다)
-        val ends = (chroma(e.top) + chroma(e.bottom)) / 2
-        assertTrue("mid ${chroma(mid)} ends $ends", chroma(mid) > ends * 0.85f)
-        assertTrue(chroma(mid) > chroma(srgbMid) * 1.3f)
-        // 끝점은 그대로 돌아온다
+        assertTrue(chroma(mid) > minOf(chroma(e.top), chroma(e.bottom)) * 0.85f)
         val top = LightParams.gradientAt(e.top, e.bottom, 0f)
         for (i in 0..2) assertEquals(e.top[i], top[i], 0.01f)
+        // 띠가 없는 시간대는 두께 0
+        assertEquals(0f, LightParams.palette(PartOfDay.NIGHT).band[3], 0f)
     }
 
     @Test fun `아침에만 오른쪽 위 햇빛`() {

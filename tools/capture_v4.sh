@@ -9,7 +9,7 @@
 #   (녹화 때는 음성을 녹음 음성(OGG)으로: Pleos TTS 소리는 앱 믹스 밖이라 앱 소리 WAV에 담기지 않는다)
 #   raw/               편집 전 원본 녹화·앱 소리 WAV·로그(git 제외 권장)
 #
-# 사용: tools/capture_v4.sh [shots|video|all]   (기본 all)
+# 사용: tools/capture_v4.sh [shots|retake|video|all]   (기본 all; retake = 01·04·05·06·09 + panel 01·04·05·06만)
 # 준비: 에뮬레이터(-gpu host 권장), 디버그 빌드 설치, ffmpeg, python3
 # Pleos Connect는 일반 앱을 (853,90)-(2535,1300) 창에 고정한다(멀티 윈도우, 몰입 모드 무시) → 2560×1440 전체를 앱으로 채울 수 없다.
 set -euo pipefail
@@ -50,10 +50,11 @@ fresh() { # 앱을 새로 띄움(웰컴 7초) + 공통 설정
   wait_s 9
 }
 CUR_USER=$(adb shell am get-current-user | tr -d '\r')
+adb shell input keyevent KEYCODE_WAKEUP; adb shell svc power stayon true   # 촬영 중 화면이 꺼지지 않게(꺼지면 검은 캡처)
 adb shell pm grant --user "$CUR_USER" $PKG android.car.permission.CAR_SPEED 2>/dev/null || true
 
 # ================================================================ 스크린샷
-if [[ $WHAT == shots || $WHAT == all ]]; then
+if [[ $WHAT == shots || $WHAT == all || $WHAT == retake ]]; then
   echo "[1·4·5] 노을 · demo:safe"
   fresh "seed:albums;seed:play;daypart:EVENING"
   T0=$(now_ms); am "demo:safe"
@@ -65,6 +66,7 @@ if [[ $WHAT == shots || $WHAT == all ]]; then
   panel_shot 05_result_s
   wait_s 8
 
+  if [[ $WHAT != retake ]]; then
   echo "[2] 밤 · 데모 드라이브"
   fresh "daypart:NIGHT"
   T0=$(now_ms); am "demo"
@@ -79,6 +81,7 @@ if [[ $WHAT == shots || $WHAT == all ]]; then
   panel_shot 03_driving_morning_rain
   am "stop"
 
+  fi
   echo "[6] demo:rough"
   fresh "daypart:auto"
   T0=$(now_ms); am "demo:rough"
@@ -87,8 +90,10 @@ if [[ $WHAT == shots || $WHAT == all ]]; then
   wait_s 4
 
   echo "[7·8·9] 기록·배지·앨범"
-  am "screen:records:2"; wait_s 2; shot 07_records_friends
-  am "screen:records:3"; wait_s 2; shot 08_badges_unlock
+  if [[ $WHAT != retake ]]; then
+    am "screen:records:2"; wait_s 2; shot 07_records_friends
+    am "screen:records:3"; wait_s 2; shot 08_badges_unlock
+  fi
   am "screen:album"; wait_s 3; shot 09_mind_album
   am "screen:mood"
 fi

@@ -34,7 +34,6 @@ import app.playdrive.music.Layer
 import app.playdrive.music.MusicCommand
 import app.playdrive.signal.PleosVehicleSignalSource
 import app.playdrive.sim.DemoDriveSource
-import app.playdrive.ui.BreathView
 import app.playdrive.ui.CoverView
 import app.playdrive.ui.GlyphButton
 import app.playdrive.ui.MoodView
@@ -54,9 +53,9 @@ import app.playdrive.sim.DriveScenario
 /**
  * 화면:
  *  - MOOD(기본·주행 중 유일): 단색 + 추상 그래픽 + 재생/일시정지. 글자·숫자·알림 없음.
- *  - 주차 후 1분: P단 + 운전석만 착석 → 제안 카드 → 1분 호흡(BREATH) → 마음 앨범
- *  - ALBUM: 마음 앨범(주행 1회 = 1장) — 정사각 커버 격자 + 제목 한 줄
- *  - ALBUM_DETAIL: 큰 커버 + 제목 + 날짜 + 회고 한 줄(입력은 정차 중에만)
+ *  - 주차하면 바로 오늘의 연주(RESULT) → 확인 → 드라이브 앨범
+ *  - ALBUM: 드라이브 앨범(주행 1회 = 1장) — 정사각 커버 격자 + 제목 한 줄
+ *  - ALBUM_DETAIL: 큰 커버 + 제목 + 날짜
  *  - SETTINGS: 화면 효과(라이브/차분), 음성 안내 켜기/끄기 — 정차 중에만
  *  - RESULT: 주차 후 오늘의 연주(등급·점·이어진 마디·판정·흔들림·곡 완성도·새 배지) — 정차 중에만
  *  - RECORDS: 연주 기록(내 기록 / 비슷한 주행 / 친구 기록(예시) / 배지·음악) — 정차 중에만
@@ -79,8 +78,7 @@ class MainActivity : ComponentActivity(), DriveController.Listener {
 
     private var screen = Screen.MOOD
     private var overlay: View? = null          // 제안 카드
-    private var page: View? = null             // BREATH / ALBUM / DEBUG
-    private var breath: BreathView? = null
+    private var page: View? = null             // ALBUM / RESULT / RECORDS / SETTINGS / DEBUG
     private var debugStatus: TextView? = null
     private var debugDetail: TextView? = null
 
@@ -111,7 +109,7 @@ class MainActivity : ComponentActivity(), DriveController.Listener {
         root.addView(mood, FrameLayout.LayoutParams(MATCH, MATCH))
         play = PlayPauseButton(this).apply { setOnClickListener { controller.togglePlay() }; isEnabled = false; alpha = 0.4f; glassBehind = mood.usesShader }
         root.addView(play, FrameLayout.LayoutParams(dp(112), dp(112), Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL).apply { bottomMargin = dp(40) })
-        // 마음 앨범 버튼: 음반 아이콘 + 글자(무슨 버튼인지 바로 보이게), 높이 76dp
+        // 드라이브 앨범 버튼: 음반 아이콘 + 글자(무슨 버튼인지 바로 보이게), 높이 76dp
         albumBtn = glassPill(getString(R.string.album_title), 'A') { showAlbum(null) }
         root.addView(albumBtn, FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(TOUCH_DP), Gravity.TOP or Gravity.END).apply { setMargins(0, dp(20), dp(20), 0) })
         // 연주 기록(정차 중에만): 위 가운데
@@ -239,23 +237,17 @@ class MainActivity : ComponentActivity(), DriveController.Listener {
 
     override fun onSourceFinished() { debugStatus?.text = "데모 드라이브 끝" }
 
-    override fun onDriveFinished(album: Album, suggestBreath: Boolean, report: ResultReport?) {
+    override fun onDriveFinished(album: Album, report: ResultReport?) {
         lastAlbum = album
         if (report != null) lastReport = report
-        // 마지막 정차의 "한 겹 추가" 장면(4초) → 굿바이(2초 동안 빛이 가라앉음) → 오늘의 연주(결과) → 제안 카드·앨범
-        root.postDelayed({
-            if (driving) return@postDelayed
-            mood.goodbye(); Log.i(TAG, "장면: 굿바이")
-            root.postDelayed({
-                if (driving) return@postDelayed
-                val next = { if (suggestBreath && !driving) { showMood(); showBreathOffer(album) } else if (!driving) showAlbum(album) }
-                if (report != null && screen == Screen.MOOD) { showResult(report, next); controller.announce(report) } else if (screen == Screen.MOOD) next()
-            }, app.playdrive.ui.MoodScene.GOODBYE_MS)
-        }, app.playdrive.ui.MoodScene.REVEAL_MS)
+        // 주차하면 바로 오늘의 연주(결과). 확인을 누르면 드라이브 앨범.
+        if (driving) return
+        dismissOverlay()
+        if (report != null) { showResult(report) { if (!driving) showAlbum(album) }; controller.announce(report) } else showAlbum(album)
     }
 
     // ------------------------------------------------------------------ 화면들
-    private fun clearPage() { breath?.cancel(); breath = null; page?.let { root.removeView(it) }; page = null; debugStatus = null; debugDetail = null }
+    private fun clearPage() { page?.let { root.removeView(it) }; page = null; debugStatus = null; debugDetail = null }
 
     private fun showMood() { clearPage(); screen = Screen.MOOD; if (overlay == null) mood.wake() }
 
@@ -266,60 +258,10 @@ class MainActivity : ComponentActivity(), DriveController.Listener {
         if (had && screen == Screen.MOOD) mood.wake()
     }
 
-    /** 주차 후 1분 제안 카드(정차 중에만). */
-    private fun showBreathOffer(album: Album?) {
-        if (driving) return
-        Log.i(TAG, "장면: 숨 고르기 제안")
-        dismissOverlay()
-        val card = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(36), dp(32), dp(36), dp(24))
-            background = app.playdrive.ui.GlassDrawable(dp(28).toFloat(), glassBehind = mood.usesShader)  // 버튼과 같은 유리
-            addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> updateGlass() }
-        }
-        card.addView(text(getString(R.string.breath_offer_title), TITLE_SP, bold = true))
-        card.addView(text(getString(R.string.breath_offer_body), BODY_SP, color = 0xFFC9D3DC.toInt()).apply { setPadding(0, dp(12), 0, dp(20)); setLineSpacing(0f, 1.15f); phraseBreak() })
-        val row = LinearLayout(this).apply { gravity = Gravity.END }
-        row.addView(button(getString(R.string.breath_decline), primary = false) { dismissOverlay(); showAlbum(album ?: lastAlbum) })
-        row.addView(button(getString(R.string.breath_accept), primary = true) { dismissOverlay(); showBreath(album ?: lastAlbum) })
-        card.addView(row)
-        overlay = card
-        root.addView(card, FrameLayout.LayoutParams(dp(760).coerceAtMost(root.width - dp(48)).takeIf { it > 0 } ?: dp(760), ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.TOP or Gravity.CENTER_HORIZONTAL).apply { topMargin = dp(24) })  // 재생 버튼과 겹치지 않게 위쪽
-        updateMoodIcons()
-    }
-
-    /** 1분 호흡: 오늘 곡을 아주 작게 + 들숨/날숨 원. 끝나면 마음 앨범으로. */
-    private fun showBreath(album: Album?, frozenAtMs: Long? = null) {
-        if (driving) return
-        Log.i(TAG, "장면: 호흡")
-        clearPage(); screen = Screen.BREATH
-        controller.setBreathMode(true)
-        val frame = FrameLayout(this)
-        val phaseText = text("", TITLE_SP, color = 0xFFDDE7EE.toInt()).apply { gravity = Gravity.CENTER }
-        val bv = BreathView(this, onPhase = { inhale -> runOnUiThread { phaseText.text = getString(if (inhale) R.string.breath_inhale else R.string.breath_exhale) } },
-            onDone = { runOnUiThread { controller.setBreathMode(false); showAlbum(album, getString(R.string.breath_done)) } })
-        bv.frozenAtMs = frozenAtMs
-        breath = bv
-        frame.addView(bv, FrameLayout.LayoutParams(MATCH, MATCH))
-        frame.addView(phaseText, FrameLayout.LayoutParams(MATCH, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM).apply { bottomMargin = dp(104) })
-        // 오늘 주행 곡(아주 작게): 커버 + 제목
-        if (album != null) {
-            val mini = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; alpha = 0.7f }
-            mini.addView(CoverView(this).apply { spec = AlbumNaming.cover(album) }, LinearLayout.LayoutParams(dp(48), dp(48)))
-            mini.addView(text(album.title, BODY_SP, color = 0xFFAFC0CC.toInt()).apply { setPadding(dp(14), 0, 0, 0) })
-            frame.addView(mini, FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL).apply { bottomMargin = dp(28) })
-        }
-        frame.addView(GlyphButton(this, 'X', "닫기").apply { setOnClickListener { controller.setBreathMode(false); showMood() } },
-            FrameLayout.LayoutParams(dp(TOUCH_DP), dp(TOUCH_DP), Gravity.TOP or Gravity.END).apply { setMargins(0, dp(20), dp(20), 0) })
-        page = frame
-        root.addView(frame, FrameLayout.LayoutParams(MATCH, MATCH))
-        if (frozenAtMs == null) bv.begin()
-    }
-
-    /** 마음 앨범: 정사각 커버 격자 + 커버 아래 제목 한 줄. highlight = 방금 생긴 앨범(첫 칸, 은은한 테두리). */
+    /** 드라이브 앨범: 정사각 커버 격자 + 커버 아래 제목 한 줄. highlight = 방금 생긴 앨범(첫 칸, 은은한 테두리). */
     private fun showAlbum(highlight: Album?, banner: String? = null) {
         if (driving) return
-        Log.i(TAG, "장면: 마음 앨범")
+        Log.i(TAG, "장면: 드라이브 앨범")
         clearPage(); screen = Screen.ALBUM
         val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(PAD_DP), dp(20), dp(PAD_DP), 0); setBackgroundColor(0xFF0F151D.toInt()) }
         val head = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
@@ -386,7 +328,7 @@ class MainActivity : ComponentActivity(), DriveController.Listener {
         return cell
     }
 
-    /** 앨범 상세: 큰 커버 + 제목 + 날짜 + 회고 한 줄(쓴 것은 글로, 없으면 입력칸 — 정차 중에만). */
+    /** 앨범 상세: 큰 커버 + 제목 + 날짜(정차 중에만). */
     private fun showAlbumDetail(a: Album) {
         if (driving) return
         Log.i(TAG, "장면: 앨범 상세")
@@ -400,25 +342,6 @@ class MainActivity : ComponentActivity(), DriveController.Listener {
         val info = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(36), 0, 0, 0) }
         info.addView(text(album.title, TITLE_SP, bold = true).apply { setLineSpacing(0f, 1.1f); phraseBreak() })
         info.addView(text(AlbumNaming.dateLine(album.summary.startEpochMs, sep = "\n"), BODY_SP, color = 0xFF9AA8B4.toInt()).apply { setPadding(0, dp(12), 0, dp(28)) })
-        if (album.reflection.isNotBlank()) {
-            info.addView(text("“${album.reflection}”", BODY_SP, color = 0xFFDDE7EE.toInt()).apply { setLineSpacing(0f, 1.2f); phraseBreak() })
-        } else {
-            val edit = EditText(this).apply {
-                hint = getString(R.string.album_reflection_hint); textSize = BODY_SP; minHeight = dp(TOUCH_DP)
-                setTextColor(Color.WHITE); setHintTextColor(0xFF6F7E8A.toInt()); inputType = InputType.TYPE_CLASS_TEXT
-                isSingleLine = false; maxLines = 3; setHorizontallyScrolling(false); isEnabled = !driving
-                imeOptions = android.view.inputmethod.EditorInfo.IME_ACTION_DONE; phraseBreak()
-                filters = arrayOf(android.text.InputFilter.LengthFilter(80))
-            }
-            info.addView(edit, LinearLayout.LayoutParams(MATCH, ViewGroup.LayoutParams.WRAP_CONTENT))
-            info.addView(LinearLayout(this).apply {
-                gravity = Gravity.END; setPadding(0, dp(12), 0, 0)
-                addView(button(getString(R.string.album_reflection_save), primary = true) {
-                    val t = edit.text.toString().trim()
-                    if (!driving && t.isNotEmpty()) { controller.albums.updateReflection(album.id, t); showAlbumDetail(album) }
-                })
-            })
-        }
         body.addView(info, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         pageView.addView(body, FrameLayout.LayoutParams(MATCH, MATCH))
         pageView.addView(GlyphButton(this, '<', "앨범 목록으로").apply { setOnClickListener { showAlbum(null) } },
@@ -551,13 +474,14 @@ class MainActivity : ComponentActivity(), DriveController.Listener {
         val demoNote = text(getString(R.string.result_demo_zone_note), BODY_SP, color = 0xFF7F8DA3.toInt()).apply {
             visibility = if (r.demoZoneData) View.VISIBLE else View.GONE; phraseBreak(); setPadding(0, dp(18), 0, 0)
         }
-        badges.addView(demoNote); if (r.demoZoneData) badges.visibility = View.VISIBLE
+        demoNote.maxLines = 2
         if (narrow) {
             val body = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(0, dp(20), 0, dp(20)) }
             body.addView(left); body.addView(cards, LinearLayout.LayoutParams(MATCH, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(24) })
             body.addView(chips, LinearLayout.LayoutParams(MATCH, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(24) })
             body.addView(badges, LinearLayout.LayoutParams(MATCH, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(16) })
             col.addView(ScrollView(this).apply { isVerticalScrollBarEnabled = false; addView(body) }, LinearLayout.LayoutParams(MATCH, 0, 1f))
+            col.addView(demoNote.apply { setPadding(0, dp(8), 0, dp(12)) }, LinearLayout.LayoutParams(MATCH, ViewGroup.LayoutParams.WRAP_CONTENT))   // 버튼 바로 위, 2줄 이내
             col.addView(buttons, LinearLayout.LayoutParams(MATCH, ViewGroup.LayoutParams.WRAP_CONTENT))
         } else {
             val body = LinearLayout(this).apply { setPadding(0, dp(28), 0, 0); isBaselineAligned = false }
@@ -567,6 +491,7 @@ class MainActivity : ComponentActivity(), DriveController.Listener {
             right.addView(android.widget.HorizontalScrollView(this).apply { isHorizontalScrollBarEnabled = false; addView(chips) },
                 LinearLayout.LayoutParams(MATCH, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(36) })
             right.addView(badges, LinearLayout.LayoutParams(MATCH, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(32) })
+            right.addView(demoNote, LinearLayout.LayoutParams(MATCH, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(24) })
             body.addView(right, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 0.6f))
             col.addView(body, LinearLayout.LayoutParams(MATCH, 0, 1f))
         }
@@ -758,7 +683,7 @@ class MainActivity : ComponentActivity(), DriveController.Listener {
     /**
      * 디버그 빌드 전용(테스트·스크린샷·영상). 여러 명령은 ';'로 이어서. 릴리스 빌드는 [RELEASE_CMDS](데모 드라이브·예시 앨범·아이콘 숨김)만 받는다:
      *  --es debug demo | real | stop
-     *  --es debug screen:mood | screen:drive | screen:park | screen:breath | screen:album | screen:detail[:n] | screen:debug
+     *  --es debug screen:mood | screen:drive | screen:album | screen:detail[:n] | screen:debug
      *  --es debug seed:albums   (기존 앨범을 모두 지우고 예시 앨범 6장 생성, 기기 안에만)
      *  --es debug demo:safe | demo:rough   (연주 기록 시연: 64마디 클라이맥스·S등급 / 흔들림 반복·완주 못함)
      *  --es debug seed:play | reset:play   (예시 연주 기록 — seed:albums 다음에 / 모두 지움), voice:on|off, screen:result, screen:records[:0~3]
@@ -808,8 +733,6 @@ class MainActivity : ComponentActivity(), DriveController.Listener {
                 mood.show(MoodState(energy = 0.85f, calm = 0.8f, brightness = 0.9f, rain = false), immediate = true)
                 simMoving = true; applyDrivingPolicy()
             }
-            cmd == "screen:park" -> { simMoving = false; applyDrivingPolicy(); showMood(); showBreathOffer(lastAlbum ?: controller.albums.all().firstOrNull()) }
-            cmd == "screen:breath" -> { simMoving = false; applyDrivingPolicy(); showBreath(lastAlbum ?: controller.albums.all().firstOrNull(), frozenAtMs = 3_600L) }
             cmd == "screen:album" -> { simMoving = false; applyDrivingPolicy(); dismissOverlay(); showAlbum(controller.albums.all().firstOrNull()) }
             cmd == "screen:detail" -> { simMoving = false; applyDrivingPolicy(); dismissOverlay(); controller.albums.all().firstOrNull()?.let { showAlbumDetail(it) } }
             cmd.startsWith("screen:detail:") -> { // n번째 앨범(0부터) 상세
@@ -878,9 +801,9 @@ class MainActivity : ComponentActivity(), DriveController.Listener {
         }
         data class Seed(val start: Long, val minutes: Int, val smooth: Float, val rain: Float, val stops: Int, val breaks: Int, val note: String)
         listOf(
-            Seed(at(1, 21), 25, 82f, 0.8f, 3, 0, "빗소리랑 같이 천천히 왔다"),   // 어제 밤 · 비 · 정차 3
+            Seed(at(1, 21), 25, 82f, 0.8f, 3, 0, ""),   // 어제 밤 · 비 · 정차 3
             Seed(at(1, 8), 34, 74f, 0f, 5, 1, ""),                          // 어제 아침 · 맑음 · 정차 5
-            Seed(at(2, 18), 14, 68f, 0f, 2, 1, "노을이 길게 남았다"),          // 그제 저녁(노을) · 맑음 · 정차 2
+            Seed(at(2, 18), 14, 68f, 0f, 2, 1, ""),          // 그제 저녁(노을) · 맑음 · 정차 2
             Seed(at(3, 14), 42, 41f, 0f, 4, 3, ""),                         // 사흘 전 한낮 · 분주 · 정차 4
             Seed(at(4, 7, 40), 6, 60f, 1f, 1, 0, ""),                       // 나흘 전 아침 · 비 · 정차 1
             Seed(at(5, 4, 30), 18, 92f, 0f, 2, 0, ""),                      // 닷새 전 새벽 · 맑음 · 정차 2

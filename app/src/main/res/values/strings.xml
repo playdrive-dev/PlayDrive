@@ -16,7 +16,7 @@
     <string name="result_weekly_best">이번 주 최고 기록이에요</string>
     <string name="result_new_badge">새 배지를 얻었어요</string>
     <string name="result_ok">확인</string>
-    <string name="result_demo_zone_note">보호구역·제한속도·회전·도착은 시연용 구간 데이터예요(에뮬레이터 내비는 위치가 움직이지 않음). 실차에서는 Pleos 내비(NaviHelper) 값을 쓰고, ADAS SDK가 공개되면 교체합니다.</string>
+    <string name="result_demo_zone_note">보호구역·회전·도착은 시연용 경로 데이터예요. 실차에서는 Pleos 내비 값을 씁니다.</string>
     <string name="records_title">연주 기록</string>
     <string name="records_tab_mine">내 기록</string>
     <string name="records_tab_similar">비슷한 주행</string>
@@ -26,19 +26,8 @@
     <string name="records_similar_none">아직 비슷한 주행이 없어요. 위치는 저장하지 않고, 움직인 시간·정차 횟수·시간대가 비슷한 주행끼리 비교해요.</string>
     <string name="records_friends_note">예시 데이터예요. 실제 친구 기록이 아니에요(계정·공유 기능은 다음 단계).</string>
     <string name="records_unlock_soon">준비 중</string>
-    <!-- 주차 후 1분 (정차 중에만 표시) -->
-    <string name="breath_offer_title">도착했어요. 1분만 숨 고르고 갈까요?</string>
-    <string name="breath_offer_body">오늘 드라이브의 곡을 작게 틀어 두고, 원에 맞춰 천천히 들이쉬고 내쉬어요.</string>
-    <string name="breath_accept">좋아요</string>
-    <string name="breath_decline">다음에요</string>
-    <string name="breath_inhale">들이쉬고</string>
-    <string name="breath_exhale">내쉬고</string>
-    <string name="breath_done">편안한 하루 보내세요</string>
-    <!-- 마음 앨범 -->
-    <string name="album_title">마음 앨범</string>
+    <!-- 드라이브 앨범 -->
+    <string name="album_title">드라이브 앨범</string>
     <string name="album_empty">아직 앨범이 없어요. 오늘의 드라이브가 첫 장이 됩니다.</string>
-    <string name="album_reflection_hint">오늘의 드라이브를 한 줄로 남겨 보세요</string>
-    <string name="album_reflection_save">남기기</string>
     <string name="album_new">새 앨범이 생겼어요</string>
-    <string name="album_driving_locked">정차 중에 남길 수 있어요</string>
 </resources>

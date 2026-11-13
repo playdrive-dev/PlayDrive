@@ -7,7 +7,7 @@ import java.util.Calendar
 import java.util.TimeZone
 import kotlin.random.Random
 
-/** 주행 한 번의 요약(점수는 저장하지 않고 '부드러움' 정도만 내부적으로 쓴다). */
+/** 주행 한 번의 요약(앨범용: '부드러움' 정도만 내부적으로 쓴다 — 곡별 등급은 play/PlayStore). */
 data class DriveSummary(
     val startEpochMs: Long,
     val endEpochMs: Long,
@@ -17,7 +17,7 @@ data class DriveSummary(
     val movingSeconds: Int,
 )
 
-/** 마음 앨범 한 장 = 주행 한 번. */
+/** 드라이브 앨범 한 장 = 주행 한 번. */
 data class Album(
     val id: Long,
     val summary: DriveSummary,
@@ -61,24 +61,7 @@ class DriveRecorder(private val clock: () -> Long) {
     }
 }
 
-/** '주차 후 1분' 제안 조건: P단 + 운전석만 착석 + 방금 주행을 마침. 동승자가 있으면 제안하지 않음. */
-object BreathCoach {
-    const val DURATION_MS = 60_000L
-    const val INHALE_MS = 4_000L
-    const val EXHALE_MS = 6_000L
-
-    fun shouldSuggest(state: DrivingState, justFinishedDrive: Boolean): Boolean =
-        justFinishedDrive && state.gear == Gear.PARK && state.driverPresent && state.solo
-
-    /** 0~1: 원의 크기(들숨에 커지고 날숨에 작아짐). */
-    fun phase(elapsedMs: Long): Pair<Boolean, Float> {
-        val cycle = INHALE_MS + EXHALE_MS
-        val t = elapsedMs % cycle
-        return if (t < INHALE_MS) true to (t.toFloat() / INHALE_MS) else false to (1f - (t - INHALE_MS).toFloat() / EXHALE_MS)
-    }
-}
-
-/** 앨범 제목·커버 생성(순수). 숫자·점수 없이 문장과 추상 그래픽으로만. */
+/** 앨범 제목·커버 생성(순수). 숫자 없이 문장과 추상 그래픽으로만. */
 object AlbumNaming {
     private val days = listOf("일요일", "월요일", "화요일", "수요일", "목요일", "금요일", "토요일")
 

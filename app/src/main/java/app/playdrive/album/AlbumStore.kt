@@ -4,7 +4,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 
-/** 마음 앨범 저장소: 기기 안(filesDir/albums.json)에만 보관. 위치·개인정보는 저장하지 않는다. */
+/** 드라이브 앨범 저장소: 기기 안(filesDir/albums.json)에만 보관. 위치·개인정보는 저장하지 않는다. */
 class AlbumStore(private val file: File) {
 
     @Synchronized fun all(): List<Album> = runCatching {
@@ -14,9 +14,6 @@ class AlbumStore(private val file: File) {
     }.getOrDefault(emptyList())
 
     @Synchronized fun add(a: Album) = save(all().filter { it.id != a.id } + a)
-
-    @Synchronized fun updateReflection(id: Long, text: String) =
-        save(all().map { if (it.id == id) it.copy(reflection = text.take(80)) else it })
 
     @Synchronized fun clear() { file.delete() }
 

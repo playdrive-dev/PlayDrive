@@ -29,9 +29,7 @@ SCENES = [
     ("정차", "PlayDrive.Drive", r"이벤트 Stopped", "last"),
     ("주차(P)", "PlayDrive.Drive", r"이벤트 Parked", "last"),
     ("굿바이(빛이 가라앉음)", "PlayDrive.UI", r"장면: 굿바이", "last"),
-    ("1분 숨 고르기 제안", "PlayDrive.UI", r"장면: 숨 고르기 제안", "last"),
-    ("호흡 화면", "PlayDrive.UI", r"장면: 호흡", "last"),
-    ("마음 앨범", "PlayDrive.UI", r"장면: 마음 앨범", "last"),
+    ("드라이브 앨범", "PlayDrive.UI", r"장면: 드라이브 앨범", "last"),
     ("앨범 상세", "PlayDrive.UI", r"장면: 앨범 상세", "last"),
 ]
 

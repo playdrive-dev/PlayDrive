@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # PlayDrive 시연 영상 원본 녹화(에뮬레이터). 편집용 원본이라 품질 우선.
 #
-#   웰컴(빛 피어남) → 74초 데모 드라이브(LIVE 효과) → 주차·굿바이 → 1분 숨 고르기 제안 → 호흡 10초 → 마음 앨범 → 앨범 상세
+#   웰컴(빛 피어남) → 74초 데모 드라이브(LIVE 효과) → 주차 → 오늘의 연주(결과) → 드라이브 앨범 → 앨범 상세
 #
 # 결과(기본 docs/demo/, git 제외):
 #   video_raw.webm            에뮬레이터 녹화 원본(2560×1440, VP9, 30fps)
@@ -125,11 +125,9 @@ else
   echo "데모 드라이브(74초)"
   am "demo"
   wait_s 70
-  echo "주차·굿바이 → 숨 고르기 제안 기다림"
-  if B=$(find_ui "좋아요" 40); then wait_s 3; adb shell input tap $B; echo "  좋아요 누름"; else echo "  제안 카드를 못 찾음"; fi
-  echo "호흡 10초"
-  wait_s 10
-  am "screen:album"; wait_s 5     # 마음 앨범(방금 생긴 앨범이 첫 칸에 강조)
+  echo "주차 → 오늘의 연주(결과)"
+  if B=$(find_ui "확인" 40); then wait_s 8; adb shell input tap $B; echo "  확인 누름"; else echo "  결과 화면을 못 찾음"; fi
+  am "screen:album"; wait_s 5     # 드라이브 앨범(방금 생긴 앨범이 첫 칸에 강조)
   am "screen:detail"; wait_s 6    # 앨범 상세(방금 생긴 앨범)
   am "record:stop"; wait_s 0.5
   adb emu screenrecord stop >/dev/null || true

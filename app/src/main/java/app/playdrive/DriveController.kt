@@ -9,7 +9,6 @@ import android.util.Log
 import app.playdrive.album.Album
 import app.playdrive.album.AlbumNaming
 import app.playdrive.album.AlbumStore
-import app.playdrive.album.BreathCoach
 import app.playdrive.album.CoverSketch
 import app.playdrive.album.CoverSpec
 import app.playdrive.album.DriveRecorder
@@ -49,8 +48,8 @@ class DriveController(context: Context, private val listener: Listener) {
         fun onUpdate(state: DrivingState, recentEvents: List<DrivingEvent>, layers: Set<Layer>, debug: String)
         fun onSourceFinished()
         fun onPlayingChanged(playing: Boolean) {}
-        /** 주행 한 번이 끝남(출발 후 P단): 새 앨범, '주차 후 1분' 제안 여부, 연주 기록(결과·새 배지·주간 최고). */
-        fun onDriveFinished(album: Album, suggestBreath: Boolean, report: ResultReport?) {}
+        /** 주행 한 번이 끝남(출발 후 P단): 새 앨범, 연주 기록(결과·새 배지·주간 최고). */
+        fun onDriveFinished(album: Album, report: ResultReport?) {}
         /** 오늘의 커버가 바뀜(새 주행 시작 또는 정차로 한 겹 추가). 화면 반영은 UI가 정차 때만. */
         fun onCover(cover: CoverSpec) {}
     }
@@ -203,12 +202,6 @@ class DriveController(context: Context, private val listener: Listener) {
         )
     }
 
-    /** '주차 후 1분' 동안 오늘의 곡을 아주 작게(keys+synth 그대로, 마스터만 낮춤). */
-    fun setBreathMode(on: Boolean) = engineHandler.post {
-        mixer?.submit(MusicCommand.MasterGain(if (on) 0.25f else 0.8f))
-        if (on && !playing) session?.play()
-    }
-
     /** 디버그: 레이어 직접 토글(소리 확인용). */
     fun debugCommand(cmd: MusicCommand) = engineHandler.post {
         if (audio != null) { session?.play(); mixer?.submit(cmd) }
@@ -254,13 +247,12 @@ class DriveController(context: Context, private val listener: Listener) {
             // 주행하며 그린 커버가 그대로 새 앨범의 커버가 된다
             val album = Album(summary.startEpochMs, summary, AlbumNaming.uniqueTitle(summary, albums.all().map { it.summary }), layers = sketch.layers)
             albums.add(album)
-            val suggest = BreathCoach.shouldSuggest(engine.state, justFinishedDrive = true)
             val report = result?.let { play.record(it) }
             report?.let { rp -> // 결과 음성을 미리 디코딩(결과 화면이 뜨는 순간 바로 말하게)
                 voiceClips?.load(resultLine(rp.result).clips() + Line.WeeklyBest.clips() + Line.NewBadge.clips())
             }
-            Log.i(TAG, "주행 끝 → 앨범 '${album.title}', 주차 후 1분 제안=$suggest, 결과=${report?.result}, 새 배지=${report?.newBadges}, 주간 최고=${report?.weeklyBest}")
-            main.post { listener.onDriveFinished(album, suggest, report) }
+            Log.i(TAG, "주행 끝 → 앨범 '${album.title}', 결과=${report?.result}, 새 배지=${report?.newBadges}, 주간 최고=${report?.weeklyBest}")
+            main.post { listener.onDriveFinished(album, report) }
         }
         val m = mixer
         if (m != null) cmds.forEach(m::submit)
