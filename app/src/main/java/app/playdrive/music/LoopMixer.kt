@@ -48,6 +48,12 @@ class LoopMixer(
         val speedBrightKmh: Float = 60f,
         val speedReverbWetAtStop: Float = 0.16f,
         val speedSmoothingS: Float = 0.5f,
+        /** 음성 안내: 음악 덕킹 −12dB(0.251), 진입 80ms, 끝난 뒤 1초에 걸쳐 복귀. 음성 음량·문장 사이 쉼. */
+        val voiceDuckGain: Float = 0.2512f,
+        val voiceDuckAttackMs: Long = 80,
+        val voiceDuckReleaseMs: Long = 1_000,
+        val voiceLevel: Float = 0.9f,
+        val voiceGapMs: Long = 220,
     )
 
     private val sr = timing.sampleRate
@@ -68,6 +74,21 @@ class LoopMixer(
     /** 드롭: 1/16박 페이드(90 BPM이면 약 42ms). */
     private val fastStep = 1f / (timing.beatFrames / 16f)
     private val fastIn = BooleanArray(n)
+    /** 흔들림으로 빠지는 악기: 다음 박에서 1박 동안 페이드(뚝 끊기지 않게). */
+    private val beatOutStep = 1f / timing.beatFrames
+    private val fastOut = BooleanArray(n)
+
+    // 먹먹함(위험·연주 정지)과 곡 처음부터
+    private var muffleTarget = 0f
+    private var muffleMix = 0f
+    private var muffleGainTarget = 1f
+    private var muffleGain = 1f
+    /** 이 격자 위치에서 루프를 처음부터(-1 = 없음). 그때까지 레이어 변경을 미룬다. */
+    @Volatile var restartAt = -1L
+        private set
+    /** 루프 처음이 시작된 격자 위치(곡 처음부터 이후 = 그 순간). 코드 타임라인도 같은 기준. */
+    var loopOrigin = 0L
+        private set
 
     private val queue = ConcurrentLinkedQueue<MusicCommand>()
     private data class Pending(val layer: Int, val on: Boolean, val atFrame: Long, val fast: Boolean)
@@ -91,6 +112,21 @@ class LoopMixer(
     private var duckReleaseAt = -1L
     private val duckAttackStep = (1f - config.duckGain) / (config.duckAttackMs * sr / 1000f)
     private val duckReleaseStep = (1f - config.duckGain) / (0.5f * timing.barFrames)
+
+    // 음성 안내(덕킹·필터·테이프스톱 영향 없음, 마스터 음량과도 무관 — '주차 후 1분'처럼 음악이 작아도 들리게)
+    private val voiceQueue = ArrayDeque<StereoPcm>()
+    private var voice: StereoPcm? = null
+    private var voicePos = 0
+    private var voiceGapLeft = 0
+    private var voiceDuck = 1f
+    private val voiceAttackStep = (1f - config.voiceDuckGain) / (config.voiceDuckAttackMs * sr / 1000f)
+    private val voiceReleaseStep = (1f - config.voiceDuckGain) / (config.voiceDuckReleaseMs * sr / 1000f)
+    /** 음성이 재생 중이거나 대기 중(오디오 스레드가 쓰고 다른 스레드가 읽음). */
+    @Volatile var speaking = false
+        private set
+    private var externalTalking = false
+    /** 테스트용: 프레임마다의 음성 덕킹 값(마지막 render 블록의 마지막 값). */
+    val voiceDuckGain: Float get() = voiceDuck
 
     // 속도 톤(0 = 정차·먹먹, 1 = 밝음). 명령이 없으면 1(필터 없음)
     private var speedNorm = 1f
@@ -142,6 +178,10 @@ class LoopMixer(
         drainCommands()
         var lpCounter = 0
         for (f in 0 until frames) {
+            if (restartAt == gridFrame) {
+                restartAt = -1; loopOrigin = gridFrame; readPos = 0.0
+                performance?.loopOrigin = gridFrame
+            }
             if (pending.isNotEmpty()) applyDue()
 
             // 1) 재생 위치(테이프 스톱이면 느려졌다가 멈춤)
@@ -155,7 +195,7 @@ class LoopMixer(
                 } else if (gridFrame < tapeResume) {
                     rate = 0.0; tapeGain = 0f
                 } else {
-                    tapeStart = -1; readPos = (gridFrame % loop).toDouble()
+                    tapeStart = -1; readPos = Math.floorMod(gridFrame - loopOrigin, loop.toLong()).toDouble()
                     resumeFadeLeft = (0.02 * sr).toInt()
                 }
             }
@@ -194,18 +234,25 @@ class LoopMixer(
             val perf = performance
             if (perf != null) { perf.process(gridFrame); l += perf.outL; r += perf.outR }
 
-            val mg = masterGain * tapeGain * duck
+            // 3b) 음성 덕킹: 음성이 있으면 −12dB로(80ms), 끝나면 1초에 걸쳐 복귀
+            val talking = voice != null || voiceQueue.isNotEmpty() || voiceGapLeft > 0 || externalTalking
+            if (talking) voiceDuck = (voiceDuck - voiceAttackStep).coerceAtLeast(config.voiceDuckGain)
+            else if (voiceDuck < 1f) voiceDuck = (voiceDuck + voiceReleaseStep).coerceAtMost(1f)
+
+            if (muffleMix != muffleTarget) muffleMix = if (muffleMix < muffleTarget) (muffleMix + rainStep).coerceAtMost(muffleTarget) else (muffleMix - rainStep).coerceAtLeast(muffleTarget)
+            if (muffleGain != muffleGainTarget) muffleGain = if (muffleGain < muffleGainTarget) (muffleGain + rainStep).coerceAtMost(muffleGainTarget) else (muffleGain - rainStep).coerceAtLeast(muffleGainTarget)
+            val mg = masterGain * tapeGain * duck * voiceDuck * muffleGain
             l *= mg; r *= mg
 
             // 5a) 톤: 속도(0.5초 스무딩)와 비가 함께 정하는 로우패스 + 리버브
             speedNorm += (speedTarget - speedNorm) * speedAlpha
             if (rainMix != rainTarget) rainMix = if (rainMix < rainTarget) (rainMix + rainStep).coerceAtMost(rainTarget) else (rainMix - rainStep).coerceAtLeast(rainTarget)
-            val toneActive = speedNorm < 0.999f || rainMix > 0f
+            val toneActive = speedNorm < 0.999f || rainMix > 0f || muffleMix > 0f
             if (toneActive || reverb.active) {
                 if (rainCounter-- <= 0) {
                     rainCounter = 64
                     val speedHz = config.speedMinCutoffHz * exp(ln(18_000.0 / config.speedMinCutoffHz) * speedNorm)
-                    val hz = (speedHz * exp(ln(config.rainCutoffHz / 18_000.0) * rainMix)).coerceIn(300.0, 18_000.0)
+                    val hz = (speedHz * exp(ln(config.rainCutoffHz / 18_000.0) * rainMix) * exp(ln(MUFFLE_HZ / 18_000.0) * muffleMix)).coerceIn(300.0, 18_000.0)
                     rainL.setLowpass(hz, sr, 0.707); rainR.setLowpass(hz, sr, 0.707)
                 }
                 val fl = rainL.process(l); val fr = rainR.process(r)
@@ -242,6 +289,16 @@ class LoopMixer(
                 }
             }
 
+            // 7) 음성 안내(덕킹이 충분히 내려간 뒤 시작)
+            if (voice == null && voiceGapLeft > 0) voiceGapLeft--
+            if (voice == null && voiceGapLeft == 0 && voiceQueue.isNotEmpty() && voiceDuck <= config.voiceDuckGain + 1e-4f) { voice = voiceQueue.removeFirst(); voicePos = 0 }
+            val vv = voice
+            if (vv != null) {
+                l += vv.left[voicePos] * config.voiceLevel; r += vv.right[voicePos] * config.voiceLevel
+                if (++voicePos >= vv.frames) { voice = null; if (voiceQueue.isNotEmpty()) voiceGapLeft = (config.voiceGapMs * sr / 1000).toInt() }
+            }
+            speaking = voice != null || voiceQueue.isNotEmpty() || voiceGapLeft > 0
+
             out[2 * f] = limit(l)
             out[2 * f + 1] = limit(r)
 
@@ -254,7 +311,7 @@ class LoopMixer(
     private fun stepGain(i: Int): Float {
         val g = gain[i]; val t = target[i]
         if (g < t) { gain[i] = (g + if (fastIn[i]) fastStep else fadeInStep).coerceAtMost(t); if (gain[i] >= t) fastIn[i] = false }
-        else if (g > t) gain[i] = (g - fadeOutStep).coerceAtLeast(t)
+        else if (g > t) { gain[i] = (g - if (fastOut[i]) beatOutStep else fadeOutStep).coerceAtLeast(t); if (gain[i] <= t) fastOut[i] = false }
         return gain[i]
     }
 
@@ -269,7 +326,19 @@ class LoopMixer(
                 is MusicCommand.MasterGain -> masterGain = c.gain
                 is MusicCommand.RainFx -> rainTarget = if (c.on) 1f else 0f
                 is MusicCommand.SpeedTone -> speedTarget = (c.kmh / config.speedBrightKmh).coerceIn(0f, 1f)
-                is MusicCommand.PerfArp, MusicCommand.PerfRootFifth, is MusicCommand.PerfShaker -> performance?.command(c, gridFrame)
+                is MusicCommand.PerfArp, MusicCommand.PerfRootFifth, is MusicCommand.PerfShaker,
+                MusicCommand.PerfFill, is MusicCommand.PerfBed, is MusicCommand.PerfReward -> performance?.command(c, gridFrame)
+                is MusicCommand.VoiceDuck -> externalTalking = c.on
+                is MusicCommand.Muffle -> {
+                    muffleTarget = when (c.level) { 0 -> 0f; 1 -> 0.75f; else -> 1f }
+                    muffleGainTarget = if (c.level >= 2) 0.45f else 1f
+                }
+                is MusicCommand.RestartSong -> {
+                    val b = timing.nextBoundary(gridFrame, timing.barFrames)
+                    restartAt = if (c.countIn) b + timing.barFrames else b
+                    if (c.countIn) performance?.countIn(b) else performance?.crash(b)
+                }
+                is MusicCommand.Speak -> { if (voiceQueue.isNotEmpty() || voice != null) voiceGapLeft = voiceGapLeft.coerceAtLeast(0); c.clips.forEach { voiceQueue.addLast(it) }; speaking = true }
             }
         }
     }
@@ -302,13 +371,14 @@ class LoopMixer(
         val i = layer.ordinal
         pending.removeAll { it.layer == i }
         // 드롭(fast로 켜기)은 다음 '박'에서 연다(최대 1박 = 0.67초). 브레이크다운 등 일반 전환은 레이어 단위(마디).
-        val q = if (fast && on) Quantize.BEAT else layer.quantize
+        val q = if (fast) Quantize.BEAT else layer.quantize
         val at = when (q) {
             Quantize.NOW -> gridFrame
             Quantize.BEAT -> timing.nextBoundary(gridFrame, timing.beatFrames)
             Quantize.BAR -> timing.nextBoundary(gridFrame, timing.barFrames)
         }
-        val due = if (tapeStart >= 0) maxOf(at, tapeResume) else at
+        var due = if (tapeStart >= 0) maxOf(at, tapeResume) else at
+        if (restartAt >= 0) due = maxOf(due, restartAt)   // 곡을 처음부터 여는 순간에 함께
         pending += Pending(i, on, due, fast)
     }
 
@@ -319,7 +389,7 @@ class LoopMixer(
             val p = it.next()
             if (p.atFrame <= gridFrame) {
                 if (!changed) synchronized(history) { if (history.isEmpty()) history.addLast(0L to activeLayers) }   // 첫 변화 직전 상태
-                target[p.layer] = if (p.on) 1f else 0f; fastIn[p.layer] = p.on && p.fast; it.remove(); changed = true
+                target[p.layer] = if (p.on) 1f else 0f; fastIn[p.layer] = p.on && p.fast; fastOut[p.layer] = !p.on && p.fast; it.remove(); changed = true
             }
         }
         if (changed) synchronized(history) { history.addLast(gridFrame to activeLayers); while (history.size > 64) history.removeFirst() }
@@ -416,5 +486,10 @@ class LoopMixer(
             x2 = x1; x1 = x.toDouble(); y2 = y1; y1 = y
             return y.toFloat()
         }
+    }
+
+    companion object {
+        /** 먹먹함 최대(연주 정지) 차단 주파수. 위험(0.75)이면 약 900Hz. */
+        const val MUFFLE_HZ = 500.0
     }
 }

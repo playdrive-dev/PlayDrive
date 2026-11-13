@@ -61,11 +61,14 @@ class PleosVehicleSignalSource(
         guard("Wiper") { startWiper(v, sink) }
         guard("Seat") { startSeats(v, sink) }
         guard("Steering") { startSteering(v, sink) }
+        guard("Navi") { PleosNaviFeed(context).also { naviFeed = it }.start(sink) }
     }
+    private var naviFeed: PleosNaviFeed? = null
 
     override fun stop() {
         cleanups.asReversed().forEach { runCatching(it) }
         cleanups.clear()
+        runCatching { naviFeed?.stop() }; naviFeed = null
         runCatching { vehicle?.release() }
         runCatching { car?.disconnect() }
         vehicle = null; car = null

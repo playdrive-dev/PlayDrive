@@ -66,4 +66,24 @@ sealed interface MusicCommand {
     data object PerfRootFifth : MusicCommand
     /** 방향지시등: 8분음표마다 셰이커, 끄면 마디 끝까지 치고 멈춤. */
     data class PerfShaker(val on: Boolean) : MusicCommand
+
+    // --- 연주 기록(이어진 마디·판정) 보상. 음높이가 있는 소리는 그 순간 코드의 구성음만, 나머지는 음높이 없는 노이즈.
+    /** 16마디마다: 마디 마지막 박에 셰이커 16분음표 롤 + 다음 다운비트로 이어지는 스웰과 심벌. */
+    data object PerfFill : MusicCommand
+    /** 이어진 마디 단계: 0 없음, 1 = 연주 악기 합류(로즈 아르페지오가 박마다 계속), 2 = 클라이맥스(8분음표 아르페지오 + 다운비트 화음 + 종소리). */
+    data class PerfBed(val level: Int) : MusicCommand
+    /** 판정 보상: 부드러운 출발 = 드롭 강화, 깔끔한 차선 변경 = 심벌 스웰, 부드러운 정지 = 마무리 화음. */
+    data class PerfReward(val kind: Reward) : MusicCommand
+    enum class Reward { DROP, SWELL, CADENCE }
+
+    /** 먹먹함: 0 없음, 1 위험(악기 1개, 로우패스), 2 연주 정지(더 먹먹하고 작게 — 잔잔한 패드만). 1마디에 걸쳐. */
+    data class Muffle(val level: Int) : MusicCommand
+    /** 곡을 처음부터: countIn이면 다음 마디에 4박 스틱 카운트인 → 그다음 마디 머리에서 루프 처음부터, 아니면 다음 마디 머리에서 바로(심벌). 그사이 레이어 변경은 그 순간까지 미룬다. */
+    data class RestartSong(val countIn: Boolean) : MusicCommand
+
+    /** 바깥 음성(Pleos TTS)이 말하는 동안 음악 덕킹(−12dB, 끝나면 1초 복귀) — 녹음 음성(Speak)과 같은 덕킹. */
+    data class VoiceDuck(val on: Boolean) : MusicCommand
+
+    /** 음성 안내: 바로 재생(앞 음성이 있으면 이어서), 그동안 음악 −12dB 덕킹, 끝나면 1초에 걸쳐 복귀. */
+    class Speak(val clips: List<StereoPcm>, val tag: String) : MusicCommand
 }

@@ -46,6 +46,46 @@
 - 비가 온 구간은 커버에 물방울로, 급가속·급제동은 물결이 흐트러진 자국으로 남습니다.
 - 주차하면 그 커버가 그대로 마음 앨범의 새 앨범이 됩니다.
 
+## 연주 기록: 곡과 라이프 게이지
+
+주행은 **곡(스테이지) 단위**로 연주됩니다. 한 곡은 64마디(약 2분 50초)이고, 끝까지 악기가 남아 있으면 완주하고 다음 곡으로 넘어갑니다. 하루 횟수 제한은 없습니다. **속도·시간·거리에는 보상하지 않고 부드러움에만 보상합니다.** 게임처럼 보이지 않도록 콤보·스코어 같은 말 대신 "이어진 마디", "흔들림", "미완주"라고 씁니다.
+
+- **라이프 게이지 = 남은 악기 수(0~6).** 곡은 악기 4개로 시작합니다.
+  - 흔들림이 생기면 악기가 다음 박에 빠집니다: 급가속·급조향·깜빡이 없는 회전·제한속도 5초 넘게 초과는 −1, 급제동은 −2.
+  - 흔들림 없이 4마디가 지날 때마다 +1(최대 6)이고, 판정이 나오면 바로 +1입니다.
+  - 출발 후 8마디는 워밍업이라 1개 밑으로 내려가지 않습니다.
+- **악기가 1개 남으면** 소리가 먹먹해지고 "조금만 부드럽게요"라고 말합니다(곡당 1번).
+- **0개가 되면** 테이프스톱으로 연주가 멈추고, 잔잔한 패드만 낮게 깔린 채 "연주가 멈췄어요. 부드럽게 달리면 다시 시작할게요."라고 말합니다.
+  흔들림 없이 15초를 달리거나, 정차했다가 다시 출발하면 "다시 시작할게요" → 4박 카운트인 → 같은 곡을 처음부터 악기 3개로 다시 연주합니다. 화면은 누르지 않아도 됩니다.
+- **이어진 마디**(게이지와 별개, 흔들림이면 0): 16마디마다 필인, 32마디에 로즈 아르페지오 합류, 48마디에 클라이맥스.
+- **판정과 소리 보상**(모두 그 순간의 코드에 맞춤):
+
+| 판정 | 조건 | 소리 |
+|---|---|---|
+| 부드러운 출발 | 출발 5초 동안 가속 0.15g 이하 | 드롭 강화 |
+| 깔끔한 차선 변경 | 깜빡이 3초 이상 → 급조향 없이 | 심벌 스웰 |
+| 부드러운 정지 | 멈출 때까지 감속 0.2g 이하 | 마무리 화음 |
+| 깔끔한 회전(내비) | 다음 회전 300m 안에서 그 방향 깜빡이 + 급조향 없이 회전 | 심벌 스웰 |
+| 깔끔한 구간 통과(내비) | 어린이 보호구역을 나올 때까지 제한속도 준수 | 드롭 강화 |
+
+- **곡 점수** = 평균 남은 악기 비율 × 70 + 곡 안 최장 이어진 마디/64 × 20 + 판정 보너스(판정마다 2, 최대 10). 등급은 S 90 이상 / A 80 / B 70 / C 완주 / 미완주입니다. 곡 안의 값만 쓰므로, 같은 부드러움이면 빨리 달려도 오래 달려도 곡 점수가 같습니다(단위 테스트 `PlayTrackerTest`).
+- **주행 결과**(P로 주차하면, 정차 중에만): 이번 주행의 앨범 커버와 최고 등급, 숫자 카드(완주한 곡/시도한 곡, 최장 이어진 마디, 흔들림), 곡별 등급, 새 배지. 하루 단위 실패 표시는 없습니다. 주차할 때 연주 중이던 곡은 세지 않습니다.
+- **연주 기록** 화면(정차 중): 내 기록, 비슷한 주행(위치를 저장하지 않으므로 움직인 시간·정차 횟수·시간대로 비교), 친구 기록(예시 데이터라고 표시), 배지·음악 해금(흔들림 없던 거리로 시티팝 300km·재즈 1,000km, 지금은 "준비 중").
+- **주행 중 화면**에는 여전히 글자·숫자가 없습니다. 빛 원의 밝기와 크기가 남은 악기 수를 따라가고, 연주가 멈추면 어두워졌다가 카운트인 뒤 곡이 다시 열리면 켜집니다.
+
+### 내비 연동(Pleos NaviHelper)
+
+- 안내가 시작되면(`onRouteStarted`) 카운트인 뒤 첫 곡이 시작됩니다. 목적지까지 1km 안(`onDrivingInfo`)이면 마지막 구간 클라이맥스가 나오고, 도착하면(`onDestinationArrived`) 연주 중이던 곡을 마무리합니다(16마디 이상일 때).
+- 회전 판정은 `onTBTInfo`, 제한속도·보호구역은 `onCurrentRoadSpeedLimit`·`CameraAlert`(SCHOOL_ZONE)·`CautionPoint`(SCHOOL_ZONE)를 씁니다.
+- **에뮬레이터 한계:** Pleos 에뮬레이터 내비는 경로 요청·회전 목록까지는 응답합니다. 하지만 위치가 움직이지 않아(GPS 주입 무시, 모의 주행 API 없음) 회전 거리·도착·제한속도가 바뀌지 않습니다. 그래서 `demo:safe`는 **시연용 구간 데이터**(제한 50 → 보호구역 30 → 50, 우회전 1번, 도착)를 씁니다. 결과 화면에도 그렇게 표시하고, 실차에서는 NaviHelper 값을 씁니다(ADAS SDK가 공개되면 교체).
+
+### 음성 안내
+
+- **Pleos TTS**(`TextToSpeech` 3.3.1, ON_DEVICE)로 먼저 읽고, 실패하면 미리 녹음한 음성(`res/raw/voice_*.ogg`)으로 대신합니다.
+- 주행 중에는 운전과 관련된 세 문장만 말합니다(조금만 부드럽게요 / 연주가 멈췄어요… / 다시 시작할게요). 같은 문장은 60초 안에 반복하지 않습니다.
+- 주차 후에는 최고 등급과 그 곡의 점, 이번 주 최고 기록, 새 배지를 말합니다.
+- 말하는 동안 음악은 −12dB로 낮아지고, 끝나면 1초에 걸쳐 돌아옵니다. 설정에서 끌 수 있습니다(기본 켜짐).
+
 ## 안전 설계
 
 - **주행 중 화면 효과는 설정에서 고릅니다.** 설정 화면은 정차 중에만 열리고, "화면 효과: 라이브 / 차분" 중 하나를 고르면 다음 출발부터 적용됩니다. 기본값은 라이브입니다.
@@ -81,8 +121,8 @@
 
 ## 사용한 Pleos SDK와 권한
 
-- Pleos Vehicle SDK `ai.pleos.playground:Vehicle:2.3.2`(Vehicle State, 읽기 전용)와 AAOS `CarPropertyManager`를 씁니다.
-- 신청이 필요한 SDK(TTS, STT, FusedLocation, Vehicle Control)는 쓰지 않습니다.
+- **Vehicle** `ai.pleos.playground:Vehicle:2.3.2`(Vehicle State, 읽기 전용), **NaviHelper** `ai.pleos.playground:NaviHelper:3.0.5`, **TextToSpeech** `ai.pleos.playground:TextToSpeech:3.3.1`(ON_DEVICE)과 AAOS `CarPropertyManager`를 씁니다.
+- STT, FusedLocation, Vehicle Control은 쓰지 않습니다. TTS는 공개 문서에 아직 "Coming Soon"으로 되어 있습니다. 에뮬레이터에서 동작을 확인했고, 쓸 수 없으면 녹음 음성으로 대신합니다.
 
 | 신호 | API | 권한 |
 |---|---|---|
@@ -93,8 +133,10 @@
 | 방향지시등 | Vehicle `getTurnSignal()` | `pleos.car.permission.CAR_LIGHTS` |
 | 와이퍼 | Vehicle `getWiper()` | `pleos.car.permission.CAR_WINDOWS` |
 | 좌석 착좌 | Vehicle `getSeat()` | `pleos.car.permission.CAR_SEATS` |
+| 회전 안내·남은 거리·도착·제한속도·보호구역 | NaviHelper `onTBTInfo` `onDrivingInfo` `onDestinationArrived` `onCurrentRoadSpeedLimit` `onCameraAlert` `onCautionPointInfo` | `pleos.car.permission.NAVI_ROUTE`, `NAVI_ROUTE_SEARCH` |
+| 음성 안내 | TextToSpeech `speak`(ON_DEVICE) | `pleos.car.permission.TTS_SERVICE` |
 
-실제로 쓰는 API의 최소 권한만 선언했고, 모두 읽기 전용입니다.
+실제로 쓰는 API의 최소 권한만 선언했습니다. 차량 신호와 내비는 읽기만 합니다. 모든 권한은 normal 등급이라 설치하면 허용되고, 차량 속도만 실행할 때 허락을 받습니다.
 
 ## 실행 방법
 
@@ -147,6 +189,17 @@ adb install -r apk/플레이드라이브_PlayDrive_release.apk
 adb shell am start -n app.playdrive/.MainActivity --es debug seed:albums
 ```
 
+### 3-1. 연주 기록 데모(demo:safe / demo:rough)
+
+```bash
+# 예시 앨범·예시 연주 기록(이전 6번의 주행)을 만든 뒤 시작
+adb shell am start -n app.playdrive/.MainActivity --es debug "'seed:albums;seed:play;demo:safe'"
+adb shell am start -n app.playdrive/.MainActivity --es debug demo:rough
+```
+- `demo:safe`(6분, 내비 안내 모드): 안내 시작 → 카운트인 → 출발 → 차선 변경·깔끔한 회전 → 첫 곡 완주(S) → 보호구역 통과 → 급제동 한 번 → 마지막 1km 클라이맥스 → 두 번째 곡 완주(A) → 도착 → 결과(완주 2/2곡, 새 배지 '첫 S등급').
+- `demo:rough`(4분): 급가속·급조향·급제동 → 악기가 빠지고 "조금만 부드럽게요" → 연주 정지 → 15초 부드럽게 → "다시 시작할게요" + 카운트인 → 같은 곡을 다시 완주(C) → 결과(완주 1/2곡).
+- 화면·영상: `docs/screens/v4/`(`tools/capture_v4.sh`). 영상 파일(mp4)은 저장소에 올리지 않습니다.
+
 ### 4. 실제 차량 신호(Virtual Console)
 
 ```bash
@@ -172,7 +225,8 @@ JDK 17과 Android SDK Platform 35가 필요합니다.
   - 악기별 스템(drums, bass, keys, guitar, synth, perc)으로 분리했습니다.
   - 모든 스템을 같은 8마디 구간으로 잘라 `app/src/main/res/raw/song_*.ogg`로 넣었습니다.
 - 보조 음원 `lofi_*.ogg`는 스템별 4마디 루프와 효과음(테이프스톱, 스크래치) 원샷입니다.
-- 반응형 연주음(로즈풍 FM 음, 셰이커)과 웰컴 차임은 앱 안에서 코드로 합성합니다. 외부 음원은 쓰지 않습니다.
+- 반응형 연주음(로즈풍 FM 음, 셰이커)과 웰컴 차임, 연주 기록 보상음(붐·심벌·스웰·마무리 화음)은 앱 안에서 코드로 합성합니다. 외부 음원은 쓰지 않습니다.
+- 음성 안내는 Pleos TTS가 먼저 읽습니다. 대신 쓰는 녹음 음성 `voice_*.ogg`(111개)는 오픈소스 음성 합성기 **eSpeak NG**(GPLv3 도구, 만든 음성 파일에는 라이선스 제한 없음)로 만든 **임시 음성**입니다. `tools/make_voice.py`로 다시 만들 수 있고, 같은 파일 이름으로 바꾸면 목소리가 바뀝니다. 시연 영상은 앱 소리를 그대로 저장해 만들기 때문에(TTS 소리는 앱 밖으로 나감) 녹음 음성으로 녹화했습니다.
 - 분석·가공 스크립트는 `tools/analyze_song.py`, `tools/process_stems.py`, `tools/find_tapestop.py`입니다. 원본 WAV는 저장소에 포함하지 않습니다.
 
 ## 라이선스

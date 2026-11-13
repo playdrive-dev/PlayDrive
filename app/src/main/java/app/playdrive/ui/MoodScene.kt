@@ -283,7 +283,7 @@ class MoodScene(
                 val e = exitFrom
                 if (exitLive && k < 1f) liveLights = e.lights.map { it * (1f - k) }
                 LiveMotion.Out(
-                    gain = lerp(e.gain, 1f, k), scale = lerp(e.scale, 1f, k), rain = if (k >= 1f) baseRain else lerp(e.rain, baseRain, k),
+                    gain = lerp(e.gain, 1f, k), scale = lerp(e.scale, 1f, k), rain = if (k >= 1f) baseRain else lerp(e.rain, baseRain, k), life = lerp(e.life, 1f, k),
                     sink = e.sink * (1f - k), heat = e.heat * (1f - k), edgeL = e.edgeL * (1f - k), edgeR = e.edgeR * (1f - k),
                 )
             }
@@ -303,7 +303,7 @@ class MoodScene(
             master = masterAt(t),
             pulse = pulse,
             timeSec = ((t - origin).mod(LOOP_MS)).toFloat() / 1000f,
-            mainScale = fx.scale, mainGain = fx.gain, rainAmount = fx.rain,
+            mainScale = fx.scale * (0.86f + 0.14f * fx.life), mainGain = fx.gain * (0.62f + 0.38f * fx.life), rainAmount = fx.rain,
             sink = fx.sink, heat = fx.heat, liveLights = liveLights, ripple = fx.ripple, edgeL = fx.edgeL, edgeR = fx.edgeR, sparkle = fx.sparkle,
         )
     }

@@ -23,6 +23,8 @@ sealed interface DrivingEvent {
     data class GearChanged(override val timeMs: Long, val gear: Gear) : DrivingEvent
     data class Parked(override val timeMs: Long) : DrivingEvent
     data class OccupancyChanged(override val timeMs: Long, val driverPresent: Boolean, val solo: Boolean) : DrivingEvent
+    /** 내비 신호를 그대로 넘김(연주 기록이 회전·구간·도착을 판정). */
+    data class Navi(override val timeMs: Long, val signal: app.playdrive.model.NaviSignal) : DrivingEvent
 }
 
 /** 엔진의 현재 상태 스냅샷. harmony는 정차 중에만 화면에 보여준다(UI 정책). */

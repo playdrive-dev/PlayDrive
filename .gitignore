@@ -43,3 +43,8 @@ docs/submit/
 
 # 시연 영상 원본(tools/record_demo.sh) — git에 올리지 않음
 docs/demo/
+
+# v4 캡처의 편집 전 원본 녹화·앱 소리(tools/capture_v4.sh)
+docs/screens/v4/raw/
+# v4 시연 영상(mp4)은 저장소에 올리지 않음
+docs/screens/v4/*.mp4

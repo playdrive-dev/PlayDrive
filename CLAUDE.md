@@ -58,7 +58,9 @@
 - 의존성: `implementation("ai.pleos.playground:Vehicle:2.3.2")`
 - 에뮬레이터: Android Studio SDK Manager > SDK Update Sites에 **Pleos Playground에서 제공받은 에뮬레이터 URL**을 추가해 API 34 Pleos Connect system image 설치 → Automotive AVD(RAM 4GB, Cold boot). 사용자가 Pleos Playground 가입·프로젝트 생성 후 받는다.
 - Virtual Console(에뮬레이터 v2.1+): `adb forward tcp:8088 tcp:8088` 후 `http://127.0.0.1:8088/`. Motion(기어·브레이크·조향·주행거리), Convenience(시트·조명·와이퍼 등), Climate 등 도메인을 조작 가능. 방향지시등 카드 존재 여부는 미확인.
-- SDK 사용 상태: **Vehicle State·NaviHelper = 신청 없이 사용 가능**. TTS·STT·FusedLocation·Vehicle Control = Coming Soon(신청 불가) → **이 앱은 사용하지 않는다.**
+- SDK 사용 상태: **Vehicle State·NaviHelper = 신청 없이 사용 가능**. TTS·STT·FusedLocation·Vehicle Control = Coming Soon(신청 불가).
+  - 2026-11-13 사용자 결정: **NaviHelper 3.0.5, TextToSpeech 3.3.1(ON_DEVICE)을 쓴다**(권한 NAVI_ROUTE, NAVI_ROUTE_SEARCH, TTS_SERVICE — 모두 normal). TTS는 에뮬레이터에서 동작 확인, 문서상 Coming Soon이라 심사 지적 가능성 있음(알고 내린 결정). STT·FusedLocation·Vehicle Control은 쓰지 않는다.
+  - 에뮬레이터 내비는 위치가 움직이지 않는다(geo fix 무시, 모의 주행 API 없음) → 회전·구간·도착은 시연용 경로 데이터(`demo:safe`)로 보여 주고 화면·README에 표기.
 
 ### 사용할 API와 권한
 
@@ -86,7 +88,7 @@
 ## 6. 주행 안전·심사 정책 (반드시 지킬 것)
 
 - 앱 카테고리 **Music/Audio**. 주행 중 사용을 위해 Distraction Optimization 선언, `CarUxRestrictions` 구독.
-- 주행 중 화면: **무드 화면 + 재생/일시정지만**. 숫자/점수, 텍스트, 알림, 동영상, 자동 스크롤 금지.
+- 주행 중 화면: **무드 화면 + 재생/일시정지만**. (빛 원의 밝기·크기 = 남은 악기 수 — 글자·숫자 없음) 숫자/점수, 텍스트, 알림, 동영상, 자동 스크롤 금지.
   - 정책(2026-11-12 변경, 사용자 결정): **"화면 효과 강도 설정"** — 설정 화면(정차 중에만)의 "화면 효과: 라이브 / 차분", 기본 **LIVE**(데모 임팩트).
     주의: Android 차량 앱 품질 기준 SA-1(미디어 앱은 주행 중 움직이는 그래픽 없음)·Pleos 운전자 주의 분산 가이드(장식적·반복적 움직임 지양)를
     엄격히 적용하는 심사라면 LIVE 기본값이 지적될 수 있다. 알고 내린 결정이며, PT에서는 "실차 권장 = 차분" 설정으로 설명한다.
@@ -107,6 +109,14 @@
 - 오디오 포커스·MediaSession 정책 준수. 내비 음성 안내 시 덕킹.
 - 운전과 무관한 알림(헤드업 알림) 금지. 리텐션 장치는 앱 안(정차 중)에서만.
 - '게임'으로 보이는 UI·용어(콤보, 스코어보드 등) 쓰지 않는다. 문구는 "연주", "트랙", "하모니".
+  - 2026-11-13 사용자 결정: 연주 기록 기능(이어진 마디·판정·등급·배지·기록 화면)은 넣되 **용어만 순화**한다 — 콤보 → "이어진 마디", 퍼펙트 → "부드러운 출발 / 깔끔한 차선 변경 / 부드러운 정지",
+    미스 → "흔들림", FAILED → "완주하지 못했어요", 랭킹 → "연주 기록", 친구 리그 → "친구 기록(예시)". 등급(S/A/B/C)·점은 **정차(주차) 후 화면에만**. 주행 중 반응은 소리로만(`play/`, `PlayTrackerTest`).
+  - 원칙: 속도·시간·거리에는 보상하지 않고 부드러움에만(점수 = 곡 완성도 − 흔들림 감점 + 판정 보너스). 예외는 음악 해금 진행도(흔들림 없던 구간의 거리, 사양).
+  - '같은 구간 비교'는 위치를 저장하지 않고 움직인 시간·정차 횟수·시간대가 비슷한 주행끼리 비교한다(사용자 결정).
+- 연주 기록 = 곡(64마디) + 라이프 게이지(남은 악기 수 0~6, 시작 4). 흔들림 −1(급제동 −2)·다음 박에 빠짐, 4마디마다 +1, 판정 +1, 워밍업 8마디, 1개 = 위험(먹먹+음성), 0 = 정지(테이프스톱·앰비언트) → 15초 부드럽게 또는 정차 후 출발 → 카운트인 → 같은 곡 악기 3개.
+  곡 점수 = 평균 악기 비율×70 + 최장 연속/64×20 + 판정 보너스(≤10). S90/A80/B70/C 완주/미완주. 하루 단위 실패 표시 없음. `play/Conductor`·`PlayTrackerTest`.
+- 음성 안내: Pleos TTS 우선, 실패하면 녹음 음성 `res/raw/voice_*.ogg`(임시: eSpeak NG, `tools/make_voice.py`). Android TTS는 에뮬레이터에 엔진 없음.
+  주행 중에는 위험·정지·다시 시작 세 문장만, 같은 문장 60초 간격. 음성 중 음악 −12dB, 끝나면 1초 복귀. 설정에서 끌 수 있음(기본 켜짐). 시연 녹화는 녹음 음성(`voice:ogg`).
 - 성능: 입력 응답 0.25초 이내, 실행 10초 이내, 2초 넘는 작업은 로딩 표시. 그 외 앱은 주행 중 CPU 5% 미만 목표.
 - 웰니스 표현만 쓴다. "스트레스 측정·치료" 같은 의료 표현 금지.
 
@@ -119,6 +129,8 @@ app/
   engine/     DrivingEventEngine: 신호 → 이벤트(정속, 급가속, 급감속, 차선변경, 비, 정차, 주차)
               순수 Kotlin, 단위 테스트 필수
   music/      AdaptiveMusicEngine: 이벤트 → 레이어 상태, 마디 퀀타이즈, 저지연 재생
+  play/       연주 기록(순수): PlayTracker(이어진 마디·판정·흔들림 → 결과), PlayProfile(배지·주간 최고·비슷한 주행·해금), PlayStore(JSON)
+  voice/      음성 안내: Line·VoicePolicy(순수), VoiceClips(OGG 디코딩) → 믹서 Speak 명령
   session/    세션 기록(오디오 녹음 X, 이벤트 로그만 저장 → 재생 시 재렌더링), Room
   ui/         주행 중 화면 / 정차 중 화면, CarUxRestrictions 연동
               무드 화면 = MoodScene(순수 상태, 주행 중 효과 = LiveMotion(LIVE) / DriveMotion(CALM)) → MoodFrame → LightParams(uniform) → LightShader(AGSL, Compose). API 33 미만 Canvas

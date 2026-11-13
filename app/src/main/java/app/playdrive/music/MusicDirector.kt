@@ -22,6 +22,9 @@ data class Arrangement(
 ) {
     enum class RainMode { NONE, LAYER, FX }
 
+    /** 게이지(남은 악기 수)로 켤 때의 순서: 단계 순서를 펼친 것. SONG = keys → synth → drums → bass → perc → guitar. */
+    val order: List<Layer> get() = stages.flatten()
+
     companion object {
         /**
          * 한 곡 스템: 정차 = keys+synth → 출발 = drums+bass '드롭'(다음 다운비트) → 안정 주행 = +perc → 오래 부드러운 주행 = +guitar.
@@ -85,6 +88,16 @@ class MusicDirector(
 
     val layers: Set<Layer> get() = current
 
+    // --- 게이지 모드(연주 기록: 곡 + 라이프 게이지). null이면 예전 단계 방식.
+    /** 남은 악기 수(0~6). 설정되면 레이어 = [Arrangement.order] 앞에서 gauge개. */
+    var gauge: Int? = null
+    /** 연주가 멈춤(게이지 0): 잔잔한 keys+synth만(믹서가 먹먹하게·작게). */
+    var stopped = false
+    /** 다음 update에서 줄어드는 악기를 '다음 박'에 빼도록(흔들림). */
+    var lossNextBeat = false
+    /** 급 이벤트 뒤 한 마디씩 복구하는 중(음성 '다시 연주를 시작할게요' 시점 판단용). */
+    val recovering: Boolean get() = recoverSinceMs != null
+
     fun update(state: DrivingState, events: List<DrivingEvent>): List<MusicCommand> {
         val out = mutableListOf<MusicCommand>()
         val now = state.timeMs
@@ -103,8 +116,12 @@ class MusicDirector(
             }
             is DrivingEvent.CruiseStarted -> if (departedOnce && stage < 2) setStage(2, now)
             is DrivingEvent.Parked -> { parked = true; departedOnce = false; stage = 0; recoverSinceMs = null }
-            is DrivingEvent.HarshBraking, is DrivingEvent.HarshAcceleration -> { harsh(Cue.TAPE_STOP, now, out); arpOn = false; rootFifthCheckAt = null }
-            is DrivingEvent.HarshSteering -> harsh(Cue.SCRATCH, now, out)
+            is DrivingEvent.HarshBraking, is DrivingEvent.HarshAcceleration -> {
+                // 게이지 모드: 악기가 빠지는 것(다음 박)이 반응, 짧은 로우패스 딥만. 테이프스톱은 연주가 멈출 때(게이지 0)
+                if (gauge != null) out += MusicCommand.LowpassDip else harsh(Cue.TAPE_STOP, now, out)
+                arpOn = false; rootFifthCheckAt = null
+            }
+            is DrivingEvent.HarshSteering -> if (gauge != null) out += MusicCommand.PlayCue(Cue.SCRATCH) else harsh(Cue.SCRATCH, now, out)
             else -> Unit
         }
 
@@ -141,9 +158,10 @@ class MusicDirector(
         val want = desiredLayers(state, now)
         val drop = if (dropPending && state.moving) arrangement.stages.getOrNull(1).orEmpty().toSet() else emptySet()
         if (dropPending && state.moving) dropPending = false
+        val beatOff = lossNextBeat; lossNextBeat = false
         for (l in Layer.entries) {
             val on = l in want
-            if (on != (l in current)) out += MusicCommand.SetLayer(l, on, fast = on && l in drop)
+            if (on != (l in current)) out += MusicCommand.SetLayer(l, on, fast = (on && l in drop) || (!on && beatOff))
         }
         current = want
         return out
@@ -165,6 +183,15 @@ class MusicDirector(
     }
 
     private fun desiredLayers(s: DrivingState, now: Long): Set<Layer> {
+        gauge?.let { g ->
+            val base = arrangement.stages[0]
+            val set = when {
+                parked || !departedOnce || stopped -> base.toSet()
+                else -> arrangement.order.take(g).filter { !(!s.moving && it in arrangement.breakdownDrop) }.toSet()
+            }.toMutableSet()
+            if (s.raining && arrangement.rain == Arrangement.RainMode.LAYER) set += Layer.RAIN
+            return set.filter { it in available }.toSet()
+        }
         val st = arrangement.stages
         val ordered = st[0].toMutableList()
         val base = ordered.size

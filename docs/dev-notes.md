@@ -783,3 +783,78 @@ README를 심사위원용으로 다시 쓰면서 버전별 화면 설명과 스�
 - 주차(P단) 후 운전석에만 사람이 있을 때 "1분 숨 고르기"를 제안합니다. 동승자가 있으면 제안하지 않습니다.
 - 마음 앨범: 주행 한 번이 앨범 한 장이 됩니다. 정사각 커버 격자에 제목 한 줄, 커버를 누르면 큰 커버·날짜·회고 한 줄을 봅니다. 커버는 그날 운전의 부드러움·비·시간대로 그린 추상 그래픽이고, 회고 한 줄은 정차 중에만 남길 수 있습니다. 같은 날 같은 시간대 제목이 겹치면 "…빗속의 두 번째 길"처럼 구분합니다. 기록은 기기 안에만 저장합니다.
 - 차량 화면 기준: 터치 영역 76dp 이상, 본문 24sp·제목 32sp 이상.
+
+## 2026-11-13 — 음성 안내 · 연주 기록(이어진 마디·판정·등급·배지) · demo:safe/rough
+
+### 1. 에뮬레이터 TTS 확인 → 쓸 수 없음
+- `TTS_SERVICE`로 등록된 서비스는 Pleos 시스템 앱 `ai.pleos.playground.caas`(4.2.10)의 SpeechService 하나뿐. Google TTS·Pico 등 일반 엔진 없음. `tts_default_synth`/`tts_default_locale` = null.
+- 앱에서 `TextToSpeech(context)` → 엔진 목록 `[]`, 34ms 만에 onInit ERROR(-1). `<queries>`에 TTS_SERVICE를 넣고, 엔진 패키지를 직접 지정해도 ERROR → ko-KR 여부 확인 불가.
+  SpeechService는 표준 TextToSpeechService가 아니라 Pleos TTS SDK(Coming Soon) 전용으로 보임. 확인 코드: `voice/TtsProbe.kt`(`--es debug tts:probe`).
+- 결정(사용자): 미리 녹음한 OGG. 임시 음성은 eSpeak NG(`brew install espeak-ng`, ko 음성) → `tools/make_voice.py` → `voice_*.ogg` 110개(1.7MB, 48kHz 모노, −18 LUFS, oggenc q4).
+  {등급}{점수}는 "오늘의 연주는 S 등급이에요."(4개) + "N 점."(0~100, 101개)을 이어 붙인다. 같은 이름으로 덮어쓰면 목소리가 바뀜.
+
+### 2. 사용자 결정(CLAUDE.md 6절 갱신)
+- 게임 요소는 기능은 넣고 용어만 순화(이어진 마디·부드러운 출발/차선 변경/정지·흔들림·완주하지 못했어요). 등급·점은 주차 후 화면에만.
+- '같은 구간 비교'는 위치 없이 '비슷한 주행'(움직인 시간 ±35%, 정차 횟수 ±2, 같은 시간대 우선).
+- 등급 기준은 하모니 지수의 감점 값을 그대로 쓰되 시간 보상(초당 +0.8)은 뺌 → 점수 = 100 × 완주 악기/6 − (급가속 10·급제동 15·급조향 8) + 판정 2점(최대 5회). S 90 / A 80 / B 65 / C 50, 미만 = 완주 못함.
+  '곡 완성도' = 마지막으로 움직이던 순간 연주 중이던 악기 수 / 6.
+
+### 3. 구조
+- `play/PlayTracker`(순수): 출발~주차 동안 상태·이벤트·지금 악기 수를 받아 `PlayEvent`(Combo/Perfect/Miss)와 주차 시 `DriveResult`.
+  - 이어진 마디 = 마지막 흔들림(또는 출발) 이후 지난 마디 수(시간 기준, 신호 대기 중에도 셈). 16마디마다 필인, 32 = 합류, 64 = 클라이맥스.
+  - 부드러운 출발: Departed 후 5초 동안 |a| ≤ 0.15g(1.471). 깔끔한 차선 변경: LaneChange 시 깜빡이 켠 지 ≥ 3초 + 그사이 급조향 없음(엔진은 TurnSignalOff 다음에 LaneChange를 냄 — 순서 주의).
+    부드러운 정지: 감속이 이어지는 동안 최대 감속 ≤ 0.2g(1.961)로 0.3 m/s 아래까지(엔진 Stopped의 2초를 기다리지 않음 → 마무리 화음이 멈추는 순간 나옴).
+  - 안전 거리(해금용): 흔들림이 있으면 직전 판정 이후 구간의 거리를 버린다.
+- `play/PlayProfile`(순수) + `PlayStore`(filesDir/play.json): 배지 6종, 이번 주(월요일 시작) 최고, 7일 연속(흔들림 0 + 완주한 날), 비교 문장, 해금 진행도(시티팝 300km·재즈 1,000km, 팩은 "준비 중").
+- 음악(`PerformanceLayer`): `PerfFill`(마지막 박 16분음표 롤 + 스웰 → 다운비트 심벌), `PerfBed(1)`(박마다 로즈 아르페지오 합류), `PerfBed(2)`(8분음표 2옥타브 아르페지오 + 다운비트 화음 + 종),
+  `PerfReward`(DROP = 다음 박 근음 붐 + 근음·5도·옥타브 + 심벌 / SWELL = 박 경계로 끝나는 스웰 + 심벌 / CADENCE = 다음 8분음표 근음 + 코드 4음). 음높이 있는 소리는 울리는 순간의 코드에서 고름(테스트).
+  테이프스톱(silence)이면 예약·합류가 모두 꺼짐. 보이스 상한 12 → 24.
+- 음성(`voice/`, `LoopMixer`): `Speak(clips)` → 음성 큐(문장 사이 220ms). 음성 동안 음악 ×0.2512(−12dB, 80ms), 끝나면 1초 선형 복귀. 음성은 마스터·필터·테이프스톱 영향 없음.
+  같은 AudioTrack(미디어 포커스 그대로)으로 나가므로 내비 안내 덕킹·포커스 정책은 기존과 같고, 시연 녹음(WavTap)에도 그대로 담김. 일시정지 중에는 말하지 않음.
+  `VoicePolicy`: 주행 중(출발~P단)은 Stop/Resume만, 같은 문장 60초 간격. 결과 음성은 주차 시 미리 디코딩(처음엔 결과 화면보다 3.4초 늦었음 → 해결).
+- 화면: 주차 → 한 겹(4초) → 굿바이(2초) → **오늘의 연주**(결과) → 확인 → 숨 고르기 제안/앨범. 무드 화면 위 가운데 **연주 기록** 버튼(탭 4개). 설정에 음성 안내 켜기/끄기.
+  주행 중 금지 화면은 `ui/ScreenPolicy`(테스트).
+- 데모: `DriveScenario.SAFE`(208초, 판정 6·흔들림 0·64마디 클라이맥스 → 100점 S), `ROUGH`(60초, 흔들림 → 완주 못함). 인텐트 `demo:safe`, `demo:rough`, `seed:play`, `reset:play`, `voice:on|off`, `screen:result`, `screen:records[:n]`, `panel:on|off`(세로 1:1.6 미리보기), `bars:off`(효과 없음 — 아래).
+
+### 4. 확인
+- 단위 테스트 **121/121**(추가 25: 이어진 마디 증가·초기화·이정표, 판정 경계 3종(1.471/1.481, 3000/2999ms, 1.961/1.971), 점수·등급 경계, 속도 무관(40 vs 110km/h 같은 점), 시간 무관(60초 vs 600초 정속 같은 점),
+  흔들림 감점 속도 무관, demo:safe/rough 결과, 배지 6종·주간 최고·비교 문장·해금, 화면 정책, 음성 정책·60초, 보상음 박자·코드톤, 음성 덕킹 −12dB·1초 복귀).
+- 에뮬레이터(swiftshader) demo:rough: 흔들림 7번(실시간 10Hz에서는 3.7 m/s² 가속이 2초 쿨다운 뒤 한 번 더 잡힘), "연주가 멈췄어요" 1번(나머지 60초 규칙으로 생략), "다시 연주를 시작할게요" 1번, 완주 못함 + 음성.
+- 에뮬레이터 demo:safe: 판정 START·CHANGE·STOP 각 2, 이어진 마디 16/32 합류/48/64 클라이맥스, 최대 74마디, 흔들림 0, 6/6, 100점 S. 결과 음성 [S등급·100점] → [이번 주 최고] → [새 배지](첫 S등급). 오류 로그 0.
+- Pleos Connect는 일반 앱을 (853,90)-(2535,1300) 멀티 윈도우에 고정 → 몰입 모드(`bars:off`)·`--windowingMode 1` 모두 무시됨. 2560×1440 전체를 앱으로 채울 수 없어 v4 캡처는 앱 창(1682×1210)과 원본 전체(full/)를 함께 저장.
+
+## 2026-11-13 (오후) — 곡 단위 + 라이프 게이지 · 결과 화면 정리 · NaviHelper/Pleos TTS
+
+### 1. 확인(구현 전)
+- 의존성: `ai.pleos.playground:NaviHelper:3.0.5`(+ navi-data 3.0.4, navi-aidl 3.0.1), `ai.pleos.playground:TextToSpeech:3.3.1` — Pleos Nexus에서 인증 없이 받아짐.
+  권한 `pleos.car.permission.NAVI_ROUTE`·`NAVI_ROUTE_SEARCH`(정의: navi 서비스)·`TTS_SERVICE`(정의: ai.pleos.playground.caas) 모두 **normal**.
+- NaviHelper 데이터 클래스(javap):
+  - TBTInfo: `type: TurnType`(LEFT/RIGHT/SHARP/KEEP/UTURN/IC·고가·지하차도·로터리/ARRIVE 등 43종), `distance: Double`(m), `description`
+  - RouteStateInfo: `termsAgreement`, `naviMode`(NOT_WORKING/SAFE_GUIDING/ROUTE_GUIDING/SIMULATION_GUIDING), `isRouting`, `routeOption`(…/SCHOOL_ZONE 우회), 충전 예상, `trafficStatus`
+  - DestinationInfo: 좌표, `name`, `address`, `remainDistance`, `remainTime`, `tollFare`, POI / RouteStartInfo: duration·distance·tollFare·name / DestinationArrivedInfo: duration·distance·name·address
+  - **제한속도·보호구역·단속카메라 있음**: 리스너 `onCurrentRoadSpeedLimit(int)`, `CameraAlert`(type: SPEED_CAMERA_FIX/…/SPEED_CAMERA_SCHOOL_ZONE, `speedLimit`, `remainDistance`, `isOverSpeed`, 구간단속 평균), `CautionPoint`(type: SCHOOL_ZONE·SPEED_BUMP 등 23종, `remainDistance`)
+  - 리스너 26개(onRouteStarted/Ended, onDestinationArrived, onTBTInfo, onNavigationStatus, onDrivingInfo, onCameraAlert, onCautionPointInfo …). 공개 메서드는 initialize/release/add·removeListener/requestRoute/cancelRoute/경유지/get…Info/requestNavigationScreen/requestTrip — **모의 주행을 켜는 API는 없음**.
+- 에뮬레이터 실측(`probe/` 확인용 앱):
+  - 초기화 직후: onCurrentLocationInfo(37.4127, 127.0947, 수정구 시흥동), onRouteStateInfo(SAFE_GUIDING), onTBTInfo([]), onCurrentRoadSpeedLimit 0(1초마다)
+  - requestRoute(판교역, 3.1km) → 6초 뒤 onRouteStarted(780초, 3100m), **onRouteEnded(시작 직후 한 번 — 도착 신호로 못 씀)**, onNavigationStatus ROUTE_DRIVE, onRouteStateInfo(ROUTE_GUIDING), onTBTInfo 7개(첫 회전 LEFT 80m), onDrivingInfo
+  - SIMULATION_GUIDING: 공개 API 없음, 내비 설정에도 항목 없음. `adb emu geo fix`로 위치를 옮겨도 내비 엔진 map-matching 위치가 그대로(엔진이 에뮬레이터 GPS를 쓰지 않음). Virtual Console에도 위치 항목 없음 → 회전 거리 감소·도착 이벤트는 에뮬레이터에서 못 받음.
+- Pleos TTS(Mode.ON_DEVICE — 사양의 "GleoTtsEngine" 클래스는 SDK에 없음): initialize 96ms → speak("다시 시작할게요. 조금만 부드럽게요.") → onReady → onStart → onDone 3.6초. 귀로 듣지는 않음(재생 시간으로 판단).
+  주의: `addEventListener`를 initialize 성공 전에 부르면 SDK 내부 lateinit 예외.
+
+### 2. 곡 + 라이프 게이지(`play/PlayTracker`, `play/Conductor`)
+- 곡 64마디, 시작 악기 4(카운트인 재시작은 3), 최대 6. 흔들림 −1(급제동 −2, 깜빡이 없는 회전·제한속도 5초 초과 −1), 4마디 연속 +1, 판정 +1. 출발 후 8마디 워밍업(1 밑으로 안 내려감).
+- 악기 1 = 위험(Muffle 1, 약 900Hz 로우패스) + "조금만 부드럽게요"(곡당 1회). 0 = 정지: DSP 테이프스톱 → keys+synth만, 500Hz·×0.45(Muffle 2) + "연주가 멈췄어요. 부드럽게 달리면 다시 시작할게요."
+  재시작: 흔들림 없이 15초 주행 또는 정차 후 출발 → "다시 시작할게요" → `RestartSong(countIn)`: 다음 마디에 4박 스틱 → 그다음 마디 머리에서 **루프를 처음부터**(믹서 readPos=0, 연주 레이어의 코드 기준 `loopOrigin`도 같이) → 악기 3개. 그 순간까지 레이어 변경을 미룬다.
+- 곡 완주: 마무리 화음 + 다음 마디 머리에서 처음부터(심벌), 악기 4개. 주차할 때 연주 중이던 곡은 세지 않음. 미완주한 시도는 곡별 결과에 '미완주'로 남는다.
+- 연출(`MusicDirector.gauge`): 레이어 = keys → synth → drums → bass → perc → guitar 앞에서 게이지 수(신호 대기 브레이크다운은 그대로). 흔들림으로 빠질 때는 다음 박에 1박 페이드. 급가감속 = 로우패스 딥, 급조향 = 스크래치(테이프스톱은 정지 때만).
+- 곡 점수 = 평균 악기 비율×70 + 곡 안 최장 이어진 마디/64×20 + 판정×2(≤10). S90/A80/B70/C 완주.
+- 화면: LIVE 빛 원 밝기 ×(0.62+0.38·악기/6), 크기 ×(0.86+0.14·악기/6), 1.2초 스무딩, 정지 = 0(어두움) → 카운트인 뒤 곡이 열리면 다시. 줄이기만 하므로 광과민성 상한과 무관.
+- 결과(P): 커버+최고 등급+제목 / 숫자 카드(완주 x/y곡·최장 이어진 마디·흔들림) / 곡별 등급 칩(S·A 청록, B·C 회색, 미완주 붉은 테두리) / 새 배지. 남색·청록 한 색. 패널(폭<높이)은 세로.
+- 기록 형식 v2(곡별). v1 기록은 읽지 않음(seed:play로 다시).
+
+### 3. 내비·음성
+- `signal/PleosNaviFeed`: onRouteStarted → RouteStarted, onTBTInfo 첫 항목 → NextTurn(LEFT/RIGHT/OFF, m), onDrivingInfo → Remaining, onDestinationArrived → Arrived, onCurrentRoadSpeedLimit·CameraAlert(SCHOOL_ZONE)·CautionPoint(SCHOOL_ZONE) → SpeedLimit. `SignalSample.Navi` → 엔진이 `DrivingEvent.Navi`로 넘김.
+- 규칙: 안내 시작 → 카운트인 → 첫 곡 / NextTurn ≤300m에서 준비 → 그 방향 깜빡이 + 급조향 없음 = 깔끔한 회전, 깜빡이 없거나 반대 = 흔들림(다음 회전으로 넘어갈 때 판정; 그 깜빡이는 차선 변경 판정에서 뺌) /
+  보호구역 진입~해제 동안 초과 없음 = 깔끔한 구간 통과 / 초과 중 경고(Muffle 1), 5초마다 −1 / 1km 안 = 클라이맥스(PerfBed 2) / 도착 = 16마디 이상이면 그 곡 완주로 마무리, 이후 곡 전환 없음.
+- `voice/PleosVoice`: 한 문장씩, onStart~onDone 동안 `VoiceDuck`(−12dB, 1초 복귀). 초기화 실패·onError → 녹음 음성. 녹화 때는 `voice:ogg`(TTS 소리는 앱 믹스 밖).
+- 테스트 **130/130**(추가: 게이지 증감·워밍업·위험 1회·정지 후 15초/흔들림 재카운트/정차 후 출발·곡 전환·점수 경계·속도 무관·시간 무관·회전·구간·안내 시작/도착·demo:safe(S,A + 내비)·demo:rough(미완주→C)).

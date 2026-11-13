@@ -59,6 +59,8 @@ dependencies {
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.activity.ktx)
     implementation(libs.pleos.vehicle)
+    implementation(libs.pleos.navihelper)
+    implementation(libs.pleos.tts)
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.compose.ui)
     implementation(libs.androidx.compose.foundation)

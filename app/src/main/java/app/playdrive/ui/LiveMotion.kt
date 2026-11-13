@@ -21,6 +21,10 @@ data class Beat(
     val drums: Boolean = false,
     /** 지금 들리는 레이어 수(악기 수). */
     val layers: Int = 0,
+    /** 연주 기록의 남은 악기 수(0~6, 모르면 -1) — 빛 원의 밝기·크기. */
+    val life: Int = -1,
+    /** 연주가 멈춤(게이지 0) — 빛 원이 어두워짐, 카운트인 뒤 곡이 다시 열리면 켜짐. */
+    val stopped: Boolean = false,
 )
 
 /**
@@ -54,6 +58,8 @@ class LiveMotion(startMs: Long, initialLayers: Int, initialRain: Boolean) {
         val rain: Float = 0f,
         /** 킥에 맞춘 물방울 반짝임 0~1. */
         val sparkle: Float = 0f,
+        /** 남은 악기 비율 0~1(1.2초 스무딩, 연주 정지 = 0). 빛 원의 밝기 ×(0.62 + 0.38·life), 크기 ×(0.86 + 0.14·life) — 줄이기만 하므로 광과민성 상한과 무관. */
+        val life: Float = 1f,
     ) {
         /** 메인 빛의 실제 밝기 배수(속도 색 포함). */
         val totalGain: Float get() = (1f + HEAT_GAIN * heat) * gain
@@ -154,7 +160,11 @@ class LiveMotion(startMs: Long, initialLayers: Int, initialRain: Boolean) {
         // ---- 비
         val rain = approach(o.rain, if (rainOn) 1f else 0f, dt / 2f)
 
+        val lifeTarget = when { b.stopped -> 0f; b.life >= 0 -> b.life / 6f; else -> o.life }
+        val life = approach(o.life, lifeTarget, dt / LIFE_S)
+
         out = Out(
+            life = life,
             gain = gain, scale = 1f + PULSE_SCALE * kick, sink = sink, heat = heat, lights = lights, ripple = ripple,
             edgeL = edgeBaseL * beatGlow, edgeR = edgeBaseR * beatGlow, rain = rain, sparkle = kick,
         )
@@ -181,6 +191,8 @@ class LiveMotion(startMs: Long, initialLayers: Int, initialRain: Boolean) {
         const val BURST_DECAY_MS = 600L
         const val RIPPLE_MS = 1_200L
         const val SINK_MS = 700L
+        /** 남은 악기 수가 바뀔 때 빛 원이 따라가는 시간(초) — 한 프레임 밝기 변화가 아주 작게. */
+        const val LIFE_S = 1.2f
         /** 맥박 최소 간격: 어느 1초 안에도 2회까지(초당 3회 이상 점멸 금지, 광과민성 기준). 90BPM(667ms)은 박마다, 120BPM 넘는 곡은 박을 건너뜀. */
         const val MIN_PULSE_GAP_MS = 520L
 

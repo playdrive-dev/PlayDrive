@@ -14,6 +14,11 @@
     <uses-permission android:name="pleos.car.permission.CAR_DRIVE" />   <!-- Brake, SteeringWheel angle -->
     <uses-permission android:name="pleos.car.permission.CAR_WINDOWS" /> <!-- Wiper -->
     <uses-permission android:name="pleos.car.permission.CAR_SEATS" />   <!-- Seat occupancy -->
+    <!-- Pleos NaviHelper 3.0.5: 회전 안내(TBT)·남은 거리·도착·제한속도 읽기 -->
+    <uses-permission android:name="pleos.car.permission.NAVI_ROUTE" />
+    <uses-permission android:name="pleos.car.permission.NAVI_ROUTE_SEARCH" />
+    <!-- Pleos TextToSpeech 3.3.1(ON_DEVICE): 음성 안내 -->
+    <uses-permission android:name="pleos.car.permission.TTS_SERVICE" />
 
     <application
         android:allowBackup="false"

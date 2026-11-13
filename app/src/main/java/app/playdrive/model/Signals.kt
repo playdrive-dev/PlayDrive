@@ -15,6 +15,22 @@ sealed interface SignalSample {
     data class SeatOccupancy(override val timeMs: Long, val seat: Seat, val occupied: Boolean) : SignalSample
     /** 조향각(도). 신호원에서 부호 보정을 마친 값. 양수 = 왼쪽. */
     data class SteeringAngle(override val timeMs: Long, val degrees: Float) : SignalSample
+    /** 내비(NaviHelper 또는 시연용 경로 데이터). */
+    data class Navi(override val timeMs: Long, val signal: NaviSignal) : SignalSample
+}
+
+/** 내비 신호(앱이 쓰는 것만). 실차 = NaviHelper([app.playdrive.signal.PleosNaviFeed]), 시연 = 데모 경로 데이터. */
+sealed interface NaviSignal {
+    /** 경로 안내 시작(onRouteStarted). */
+    data class RouteStarted(val distanceM: Int) : NaviSignal
+    /** 다음 회전(onTBTInfo 첫 항목). turn = LEFT/RIGHT(그 밖의 회전·직진은 OFF). */
+    data class NextTurn(val turn: TurnSignal, val distanceM: Int) : NaviSignal
+    /** 목적지까지 남은 거리(onDrivingInfo). */
+    data class Remaining(val distanceM: Int) : NaviSignal
+    /** 제한속도(onCurrentRoadSpeedLimit / CameraAlert). schoolZone = 어린이 보호구역(CameraType SCHOOL_ZONE·CautionPoint SCHOOL_ZONE). demo = 시연용 구간 데이터. */
+    data class SpeedLimit(val kmh: Int, val schoolZone: Boolean, val demo: Boolean = false) : NaviSignal
+    /** 목적지 도착(onDestinationArrived). */
+    data object Arrived : NaviSignal
 }
 
 enum class Gear { PARK, REVERSE, NEUTRAL, DRIVE, UNKNOWN }

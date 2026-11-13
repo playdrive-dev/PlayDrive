@@ -40,6 +40,16 @@ import app.playdrive.ui.GlyphButton
 import app.playdrive.ui.MoodView
 import app.playdrive.ui.PlayPauseButton
 import app.playdrive.ui.UxRestrictionsWatcher
+import app.playdrive.ui.Screen
+import app.playdrive.ui.ScreenPolicy
+import app.playdrive.play.Badge
+import app.playdrive.play.DriveResult
+import app.playdrive.play.FriendExamples
+import app.playdrive.play.GenrePack
+import app.playdrive.play.Grade
+import app.playdrive.play.PerfectKind
+import app.playdrive.play.ResultReport
+import app.playdrive.sim.DriveScenario
 
 /**
  * 화면:
@@ -47,19 +57,20 @@ import app.playdrive.ui.UxRestrictionsWatcher
  *  - 주차 후 1분: P단 + 운전석만 착석 → 제안 카드 → 1분 호흡(BREATH) → 마음 앨범
  *  - ALBUM: 마음 앨범(주행 1회 = 1장) — 정사각 커버 격자 + 제목 한 줄
  *  - ALBUM_DETAIL: 큰 커버 + 제목 + 날짜 + 회고 한 줄(입력은 정차 중에만)
- *  - SETTINGS: 화면 효과(라이브/차분) — 정차 중에만
+ *  - SETTINGS: 화면 효과(라이브/차분), 음성 안내 켜기/끄기 — 정차 중에만
+ *  - RESULT: 주차 후 오늘의 연주(등급·점·이어진 마디·판정·흔들림·곡 완성도·새 배지) — 정차 중에만
+ *  - RECORDS: 연주 기록(내 기록 / 비슷한 주행 / 친구 기록(예시) / 배지·음악) — 정차 중에만
  *  - DEBUG: 개발용(디버그 빌드)
  * 주행 중(CarUxRestrictions가 DO 요구 또는 시뮬레이션 주행 중)에는 MOOD 외 화면을 닫는다.
  */
 class MainActivity : ComponentActivity(), DriveController.Listener {
-
-    enum class Screen { MOOD, BREATH, ALBUM, ALBUM_DETAIL, SETTINGS, DEBUG }
 
     private lateinit var controller: DriveController
     private lateinit var root: FrameLayout
     private lateinit var mood: MoodView
     private lateinit var play: PlayPauseButton
     private lateinit var albumBtn: View
+    private lateinit var recordsBtn: View
     private lateinit var demoBtn: View
     private lateinit var settingsBtn: View
     private lateinit var debugBtn: GlyphButton
@@ -81,6 +92,8 @@ class MainActivity : ComponentActivity(), DriveController.Listener {
     private var prevLayers = 0
     private var recoverTo = 0
     private var lastAlbum: Album? = null
+    private var lastReport: ResultReport? = null
+    private var lastRecordsTab = 0
     private var prepared = false
     private var pendingIntent: Intent? = null
     private var debugIcon = true
@@ -101,6 +114,9 @@ class MainActivity : ComponentActivity(), DriveController.Listener {
         // 마음 앨범 버튼: 음반 아이콘 + 글자(무슨 버튼인지 바로 보이게), 높이 76dp
         albumBtn = glassPill(getString(R.string.album_title), 'A') { showAlbum(null) }
         root.addView(albumBtn, FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(TOUCH_DP), Gravity.TOP or Gravity.END).apply { setMargins(0, dp(20), dp(20), 0) })
+        // 연주 기록(정차 중에만): 위 가운데
+        recordsBtn = glassPill(getString(R.string.records_title), null) { showRecords(0) }
+        root.addView(recordsBtn, FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(TOUCH_DP), Gravity.TOP or Gravity.CENTER_HORIZONTAL).apply { topMargin = dp(20) })
         // 데모 드라이브(릴리스에도 있음 — 실제 차량 신호 없이 심사·시연용으로 74초 주행을 재생). 정차 중에만 보인다.
         demoBtn = glassPill(getString(R.string.demo_drive), null) { if (prepared && !driving) { dismissOverlay(); showMood(); startDemo() } }.apply { isEnabled = false; alpha = 0.4f }
         root.addView(demoBtn, FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(TOUCH_DP), Gravity.TOP or Gravity.START).apply { setMargins(dp(20), dp(20), 0, 0) })
@@ -108,12 +124,14 @@ class MainActivity : ComponentActivity(), DriveController.Listener {
         settingsBtn = GlyphButton(this, 'S', getString(R.string.settings_title)).apply { setOnClickListener { showSettings() } }
         root.addView(settingsBtn, FrameLayout.LayoutParams(dp(TOUCH_DP), dp(TOUCH_DP), Gravity.BOTTOM or Gravity.END).apply { setMargins(0, 0, dp(20), dp(20)) })
         mood.effect = loadEffect()
+        val voiceOn = getSharedPreferences("settings", MODE_PRIVATE).getBoolean("voice", true)
         // 개발용(디버그 빌드에서만 보임, 릴리스 빌드엔 없음)
         debugBtn = GlyphButton(this, 'D', "debug").apply { setOnClickListener { showDebug() }; visibility = if (BuildConfig.DEBUG) View.VISIBLE else View.GONE }
         root.addView(debugBtn, FrameLayout.LayoutParams(dp(TOUCH_DP), dp(TOUCH_DP), Gravity.BOTTOM or Gravity.START).apply { setMargins(dp(20), 0, 0, dp(20)) })
         setContentView(root)
 
         controller = DriveController(this, this)
+        controller.voiceEnabled = voiceOn
         controller.prepare()
         mood.beatSource = { controller.beatPhase() }
         mood.beatInfo = { controller.beatInfo() }
@@ -122,7 +140,7 @@ class MainActivity : ComponentActivity(), DriveController.Listener {
         root.postDelayed(object : Runnable { override fun run() { if (dayOverride == null) mood.setDayPart(currentDayPart()); root.postDelayed(this, 60_000) } }, 60_000)
         // 유리 패널 위치(버튼이 움직이거나 보이고 숨을 때마다)
         val relayout = View.OnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> updateGlass() }
-        play.addOnLayoutChangeListener(relayout); albumBtn.addOnLayoutChangeListener(relayout); demoBtn.addOnLayoutChangeListener(relayout); settingsBtn.addOnLayoutChangeListener(relayout)
+        play.addOnLayoutChangeListener(relayout); albumBtn.addOnLayoutChangeListener(relayout); recordsBtn.addOnLayoutChangeListener(relayout); demoBtn.addOnLayoutChangeListener(relayout); settingsBtn.addOnLayoutChangeListener(relayout)
         // 웰컴: 검은 화면 → 3초 동안 빛이 피어남 → (음악 준비가 끝났으면) 첫 다운비트에 차임 + 음악 시작
         mood.welcome()
         welcomeEndsAt = SystemClock.uptimeMillis() + app.playdrive.ui.MoodScene.WELCOME_MS
@@ -151,7 +169,7 @@ class MainActivity : ComponentActivity(), DriveController.Listener {
     // ------------------------------------------------------------------ 주행 정책
     private fun applyDrivingPolicy() {
         mood.restricted = driving
-        if (driving) { dismissOverlay(); if (screen != Screen.MOOD && screen != Screen.DEBUG) showMood() }
+        if (driving) { dismissOverlay(); if (!ScreenPolicy.allowedWhileDriving(screen)) showMood() }
         updateMoodIcons()
     }
 
@@ -159,6 +177,7 @@ class MainActivity : ComponentActivity(), DriveController.Listener {
     private fun updateMoodIcons() {
         val show = !driving && overlay == null
         albumBtn.visibility = if (show) View.VISIBLE else View.GONE
+        recordsBtn.visibility = if (show && demoIcon) View.VISIBLE else View.GONE
         demoBtn.visibility = if (show && demoIcon) View.VISIBLE else View.GONE
         settingsBtn.visibility = if (show && demoIcon) View.VISIBLE else View.GONE
         debugBtn.visibility = if (BuildConfig.DEBUG && show && debugIcon) View.VISIBLE else View.GONE
@@ -174,6 +193,7 @@ class MainActivity : ComponentActivity(), DriveController.Listener {
         }
         add(play, play.width / 2f)
         add(albumBtn, albumBtn.height / 2f)
+        add(recordsBtn, recordsBtn.height / 2f)
         add(demoBtn, demoBtn.height / 2f)
         add(settingsBtn, settingsBtn.height / 2f)
         overlay?.let { add(it, dp(28).toFloat()) }
@@ -219,14 +239,17 @@ class MainActivity : ComponentActivity(), DriveController.Listener {
 
     override fun onSourceFinished() { debugStatus?.text = "데모 드라이브 끝" }
 
-    override fun onDriveFinished(album: Album, suggestBreath: Boolean) {
+    override fun onDriveFinished(album: Album, suggestBreath: Boolean, report: ResultReport?) {
         lastAlbum = album
-        // 마지막 정차의 "한 겹 추가" 장면(4초) → 굿바이(2초 동안 빛이 가라앉음) → 제안 카드·앨범
+        if (report != null) lastReport = report
+        // 마지막 정차의 "한 겹 추가" 장면(4초) → 굿바이(2초 동안 빛이 가라앉음) → 오늘의 연주(결과) → 제안 카드·앨범
         root.postDelayed({
             if (driving) return@postDelayed
             mood.goodbye(); Log.i(TAG, "장면: 굿바이")
             root.postDelayed({
-                if (suggestBreath && !driving) showBreathOffer(album) else if (!driving && screen == Screen.MOOD) showAlbum(album)
+                if (driving) return@postDelayed
+                val next = { if (suggestBreath && !driving) { showMood(); showBreathOffer(album) } else if (!driving) showAlbum(album) }
+                if (report != null && screen == Screen.MOOD) { showResult(report, next); controller.announce(report) } else if (screen == Screen.MOOD) next()
             }, app.playdrive.ui.MoodScene.GOODBYE_MS)
         }, app.playdrive.ui.MoodScene.REVEAL_MS)
     }
@@ -425,8 +448,253 @@ class MainActivity : ComponentActivity(), DriveController.Listener {
             row.addView(button(getString(label), primary = level == cur) { saveEffect(level); showSettings() }.apply { contentDescription = "${getString(R.string.settings_effect)} ${getString(label)}" })
         }
         col.addView(row)
+        val voiceOn = controller.voiceEnabled
+        val vrow = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(0, dp(12), 0, dp(12)) }
+        vrow.addView(text(getString(R.string.settings_voice), BODY_SP), LinearLayout.LayoutParams(dp(220), ViewGroup.LayoutParams.WRAP_CONTENT))
+        for ((on, label) in listOf(true to R.string.settings_voice_on, false to R.string.settings_voice_off)) {
+            vrow.addView(button(getString(label), primary = on == voiceOn) { saveVoice(on); showSettings() }.apply { contentDescription = "${getString(R.string.settings_voice)} ${getString(label)}" })
+        }
+        col.addView(vrow)
         page = col
         root.addView(col, FrameLayout.LayoutParams(MATCH, MATCH))
+    }
+
+    private fun saveVoice(on: Boolean) {
+        getSharedPreferences("settings", MODE_PRIVATE).edit().putBoolean("voice", on).apply()
+        controller.voiceEnabled = on
+    }
+
+    // ------------------------------------------------------------------ 연주 기록(정차 중에만)
+    private fun gradeText(r: DriveResult) = r.best?.let { "${it.grade.label}등급 ${it.score}점" } ?: "완주한 곡 없음"
+
+    /**
+     * 오늘의 연주(정차 중에만). 정보는 커버·최고 등급·제목 / 숫자 카드 3개(완주 곡·최장 마디·흔들림) / 곡별 등급 칩 / 새 배지뿐.
+     * 남색 바탕, 청록 포인트 한 색. 세로 패널(폭 < 높이)이면 위에서 아래로 쌓는다.
+     */
+    private fun showResult(report: ResultReport, onDone: () -> Unit) {
+        if (driving) return
+        val r = report.result
+        Log.i(TAG, "장면: 오늘의 연주 완주 ${r.completedSongs}/${r.attemptedSongs} 최고 ${r.bestGrade}")
+        clearPage(); screen = Screen.RESULT
+        val narrow = root.width in 1 until root.height
+        val album = lastAlbum ?: controller.albums.all().firstOrNull()
+        val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(40), dp(24), dp(40), dp(32)); setBackgroundColor(NAVY) }
+        val buttons = LinearLayout(this).apply { gravity = Gravity.END or Gravity.CENTER_VERTICAL }
+        buttons.addView(button(getString(R.string.records_title), primary = false) { showRecords(0) })
+        buttons.addView(button(getString(R.string.result_ok), primary = true) { onDone() })
+        if (!narrow) {
+            val head = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
+            head.addView(text(getString(R.string.result_title), TITLE_SP, bold = true), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            head.addView(buttons)
+            col.addView(head)
+        } else col.addView(text(getString(R.string.result_title), TITLE_SP, bold = true))
+
+        // 커버 + 최고 등급 + 한 줄 제목
+        val coverBox = FrameLayout(this).apply { clipToOutline = true; outlineProvider = roundedOutline(dp(24)) }
+        coverBox.addView(CoverView(this).apply { spec = album?.let { AlbumNaming.cover(it) } }, FrameLayout.LayoutParams(MATCH, MATCH))
+        val best = r.best
+        coverBox.addView(text(best?.grade?.label ?: "", if (narrow) 120f else 168f, bold = true).apply {
+            setShadowLayer(dp(18).toFloat(), 0f, 0f, 0x99000000.toInt()); setPadding(dp(28), 0, 0, dp(4))
+        }, FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM or Gravity.START))
+        val title = text(album?.title ?: "", BODY_SP, color = SOFT).apply { setPadding(dp(4), dp(14), 0, 0); phraseBreak(); maxLines = 2 }
+        val left = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        left.addView(coverBox); left.addView(title)
+        if (best == null) left.addView(text("다음엔 한 곡 끝까지 연주해 봐요", BODY_SP, color = TEAL).apply { setPadding(dp(4), dp(6), 0, 0); phraseBreak() })
+
+        // 숫자 카드 3개
+        fun card(number: String, label: String) = LinearLayout(this).apply {
+            orientation = if (narrow) LinearLayout.HORIZONTAL else LinearLayout.VERTICAL
+            gravity = if (narrow) Gravity.CENTER_VERTICAL else Gravity.START
+            setPadding(dp(28), dp(20), dp(28), dp(22))
+            background = GradientDrawable().apply { cornerRadius = dp(24).toFloat(); setColor(CARD) }
+            if (narrow) setPadding(dp(24), dp(10), dp(24), dp(10))
+            addView(text(number, if (narrow) 56f else 64f, bold = true, color = Color.WHITE).apply { includeFontPadding = false })
+            addView(text(label, BODY_SP, color = SOFT).apply { setPadding(if (narrow) dp(20) else 0, if (narrow) 0 else dp(6), 0, 0) })
+        }
+        val cards = LinearLayout(this).apply { orientation = if (narrow) LinearLayout.VERTICAL else LinearLayout.HORIZONTAL }
+        listOf("${r.completedSongs}/${r.attemptedSongs}" to "완주한 곡", "${r.maxCombo}" to "최장 이어진 마디", "${r.misses}" to "흔들림").forEachIndexed { i, (n, l) ->
+            cards.addView(card(n, l), if (narrow) LinearLayout.LayoutParams(MATCH, ViewGroup.LayoutParams.WRAP_CONTENT).apply { if (i > 0) topMargin = dp(12) }
+                else LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { if (i > 0) leftMargin = dp(16) })
+        }
+
+        // 곡별 등급 칩
+        fun chip(song: app.playdrive.play.SongResult) = LinearLayout(this).apply {
+            gravity = Gravity.CENTER_VERTICAL; setPadding(dp(20), dp(10), dp(12), dp(10))
+            background = GradientDrawable().apply { cornerRadius = dp(38).toFloat(); setColor(CARD) }
+            addView(text(song.title, BODY_SP, color = Color.WHITE))
+            val g = song.grade
+            val (fill, stroke, fg) = when (g) {
+                Grade.S, Grade.A -> Triple(TEAL, TEAL, NAVY)
+                Grade.B, Grade.C -> Triple(0x33FFFFFF, 0x33FFFFFF, Color.WHITE)
+                Grade.FAILED -> Triple(Color.TRANSPARENT, MUTED_RED, 0xFFE3B5B5.toInt())
+            }
+            addView(text(g.label, BODY_SP, bold = true, color = fg).apply {
+                setPadding(dp(18), dp(4), dp(18), dp(4)); minWidth = dp(64); gravity = Gravity.CENTER
+                background = GradientDrawable().apply { cornerRadius = dp(30).toFloat(); setColor(fill); setStroke(dp(2), stroke) }
+            }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { leftMargin = dp(14) })
+        }
+        val chips = LinearLayout(this).apply { orientation = if (narrow) LinearLayout.VERTICAL else LinearLayout.HORIZONTAL }
+        if (r.songs.isEmpty()) chips.addView(text("곡을 끝까지 연주하기 전에 도착했어요", BODY_SP, color = SOFT))
+        r.songs.forEachIndexed { i, sng -> chips.addView(chip(sng), LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { if (i > 0) { if (narrow) topMargin = dp(10) else leftMargin = dp(12) } }) }
+
+        // 새 배지(없으면 숨김)
+        val badges = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; visibility = if (report.newBadges.isEmpty()) View.GONE else View.VISIBLE }
+        report.newBadges.forEach { b ->
+            badges.addView(LinearLayout(this).apply {
+                gravity = Gravity.CENTER_VERTICAL; setPadding(0, dp(6), 0, dp(6))
+                addView(View(this@MainActivity).apply { background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(TEAL) } }, LinearLayout.LayoutParams(dp(28), dp(28)))
+                addView(text("새 배지  ${b.title}", BODY_SP, bold = true).apply { setPadding(dp(16), 0, 0, 0) })
+            })
+        }
+
+        // 시연용 구간 데이터 표기(보호구역·제한속도·회전·도착을 데모 경로로 넣었을 때)
+        val demoNote = text(getString(R.string.result_demo_zone_note), BODY_SP, color = 0xFF7F8DA3.toInt()).apply {
+            visibility = if (r.demoZoneData) View.VISIBLE else View.GONE; phraseBreak(); setPadding(0, dp(18), 0, 0)
+        }
+        badges.addView(demoNote); if (r.demoZoneData) badges.visibility = View.VISIBLE
+        if (narrow) {
+            val body = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(0, dp(20), 0, dp(20)) }
+            body.addView(left); body.addView(cards, LinearLayout.LayoutParams(MATCH, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(24) })
+            body.addView(chips, LinearLayout.LayoutParams(MATCH, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(24) })
+            body.addView(badges, LinearLayout.LayoutParams(MATCH, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(16) })
+            col.addView(ScrollView(this).apply { isVerticalScrollBarEnabled = false; addView(body) }, LinearLayout.LayoutParams(MATCH, 0, 1f))
+            col.addView(buttons, LinearLayout.LayoutParams(MATCH, ViewGroup.LayoutParams.WRAP_CONTENT))
+        } else {
+            val body = LinearLayout(this).apply { setPadding(0, dp(28), 0, 0); isBaselineAligned = false }
+            body.addView(left, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 0.4f))
+            val right = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(48), 0, 0, 0) }
+            right.addView(cards, LinearLayout.LayoutParams(MATCH, ViewGroup.LayoutParams.WRAP_CONTENT))
+            right.addView(android.widget.HorizontalScrollView(this).apply { isHorizontalScrollBarEnabled = false; addView(chips) },
+                LinearLayout.LayoutParams(MATCH, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(36) })
+            right.addView(badges, LinearLayout.LayoutParams(MATCH, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(32) })
+            body.addView(right, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 0.6f))
+            col.addView(body, LinearLayout.LayoutParams(MATCH, 0, 1f))
+        }
+        page = col
+        root.addView(col, FrameLayout.LayoutParams(MATCH, MATCH))
+        // 커버는 정사각형: 왼쪽 칸 폭(가로) 또는 패널 폭에 맞추고, 화면 높이를 넘지 않게
+        coverBox.post {
+            val w = left.width
+            val maxH = if (narrow) (col.height * 0.34f).toInt() else col.height - dp(24) - dp(TOUCH_DP) - dp(28) - title.height - dp(40)
+            val side = minOf(w, maxH).coerceAtLeast(dp(160))
+            coverBox.layoutParams = LinearLayout.LayoutParams(side, side)
+        }
+    }
+
+    private fun badgeCard(b: Badge, earned: Boolean) = LinearLayout(this).apply {
+        orientation = LinearLayout.VERTICAL; setPadding(dp(24), dp(16), dp(24), dp(16)); alpha = if (earned) 1f else 0.4f
+        background = GradientDrawable().apply { cornerRadius = dp(20).toFloat(); setColor(if (earned) 0x33E9D38A else 0x18FFFFFF); setStroke(1, if (earned) 0x88E9D38A.toInt() else 0x33FFFFFF) }
+        addView(text(b.title, BODY_SP, bold = true, color = if (earned) 0xFFF3E4B0.toInt() else Color.WHITE))
+        addView(text(b.desc, BODY_SP, color = 0xFFC9D3DC.toInt()).apply { phraseBreak() })
+        layoutParams = LinearLayout.LayoutParams(dp(420), ViewGroup.LayoutParams.WRAP_CONTENT).apply { setMargins(0, dp(6), dp(16), dp(6)) }
+    }
+
+    /** 연주 기록: 탭 0 내 기록(높은 점 순), 1 비슷한 주행, 2 친구 기록(예시), 3 배지·음악 해금. */
+    private fun showRecords(tab: Int) {
+        if (driving) return
+        clearPage(); screen = Screen.RECORDS; lastRecordsTab = tab
+        Log.i(TAG, "장면: 연주 기록 탭 $tab")
+        val profile = controller.play.load()
+        val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(PAD_DP), dp(20), dp(PAD_DP), 0); setBackgroundColor(0xFF0F151D.toInt()) }
+        val head = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
+        head.addView(text(getString(R.string.records_title), TITLE_SP, bold = true).apply { setPadding(0, 0, dp(24), 0) })
+        val tabs = listOf(R.string.records_tab_mine, R.string.records_tab_similar, R.string.records_tab_friends, R.string.records_tab_badges)
+        val tabRow = LinearLayout(this)
+        tabs.forEachIndexed { i, id -> tabRow.addView(button(getString(id), primary = i == tab) { showRecords(i) }) }
+        head.addView(HorizontalScrollViewCompat(tabRow), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        head.addView(GlyphButton(this, 'X', "닫기").apply { setOnClickListener { showMood() } }, LinearLayout.LayoutParams(dp(TOUCH_DP), dp(TOUCH_DP)))
+        col.addView(head)
+        val list = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(0, dp(16), 0, dp(PAD_DP)) }
+        col.addView(ScrollView(this).apply { isVerticalScrollBarEnabled = false; addView(list, FrameLayout.LayoutParams(MATCH, ViewGroup.LayoutParams.WRAP_CONTENT)) }, LinearLayout.LayoutParams(MATCH, 0, 1f))
+        fun row(main: String, sub: String, highlight: Boolean = false) = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL; setPadding(dp(24), dp(14), dp(24), dp(14))
+            background = GradientDrawable().apply { cornerRadius = dp(18).toFloat(); setColor(if (highlight) 0x2A8FD3C6 else 0x14FFFFFF) }
+            addView(text(main, BODY_SP, bold = true))
+            addView(text(sub, BODY_SP, color = 0xFF9AA8B4.toInt()).apply { phraseBreak() })
+            layoutParams = LinearLayout.LayoutParams(MATCH, ViewGroup.LayoutParams.WRAP_CONTENT).apply { setMargins(0, dp(6), 0, dp(6)) }
+        }
+        fun resultRow(r: DriveResult, hl: Boolean = false) = row("${gradeText(r)}  ·  완주 ${r.completedSongs}/${r.attemptedSongs}곡  ·  최장 ${r.maxCombo}마디",
+            "${AlbumNaming.dateLine(r.startEpochMs)}  ·  흔들림 ${r.misses}번  ·  곡별 ${r.songs.joinToString(" ") { it.grade.label }.ifEmpty { "없음" }}", hl)
+        val latest = profile.results.maxByOrNull { it.startEpochMs }
+        when (tab) {
+            0 -> if (profile.results.isEmpty()) list.addView(text(getString(R.string.records_empty), BODY_SP, color = 0xFF9AA8B4.toInt()))
+                 else profile.results.sortedWith(compareByDescending<DriveResult> { it.bestScore }.thenByDescending { it.startEpochMs }).take(20).forEach { list.addView(resultRow(it, it === latest)) }
+            1 -> {
+                val sim = latest?.let { profile.similarTo(it) }.orEmpty()
+                if (latest == null || sim.isEmpty()) list.addView(text(getString(R.string.records_similar_none), BODY_SP, color = 0xFF9AA8B4.toInt()).apply { phraseBreak() })
+                else {
+                    profile.copy(results = profile.results - latest).compare(latest)?.let { list.addView(text(it, BODY_SP, bold = true, color = 0xFF8FD3C6.toInt()).apply { setPadding(0, 0, 0, dp(12)); phraseBreak() }) }
+                    list.addView(text("이번 주행", BODY_SP, color = 0xFF9AA8B4.toInt()))
+                    list.addView(resultRow(latest, true))
+                    list.addView(text("비슷한 주행(움직인 시간·정차 횟수·시간대 기준, 위치 저장 없음)", BODY_SP, color = 0xFF9AA8B4.toInt()).apply { setPadding(0, dp(12), 0, 0); phraseBreak() })
+                    sim.forEach { list.addView(resultRow(it)) }
+                }
+            }
+            2 -> {
+                list.addView(text(getString(R.string.records_friends_note), BODY_SP, bold = true, color = 0xFFE9B98A.toInt()).apply { setPadding(0, 0, 0, dp(12)); phraseBreak() })
+                val mine = profile.results.filter { it.best != null }.maxByOrNull { it.bestScore }
+                val rows = FriendExamples.rows.map { Triple(it.name, it.score, row("${it.name}  ·  ${it.grade.label}등급 ${it.score}점", "완주 ${it.songs}  ·  최장 ${it.bestCombo}마디")) }.toMutableList()
+                if (mine != null) rows += Triple("나", mine.bestScore, row("나  ·  ${gradeText(mine)}", "완주 ${mine.completedSongs}/${mine.attemptedSongs}곡  ·  최장 ${profile.bestCombo}마디", true))
+                rows.sortedByDescending { it.second }.forEach { list.addView(it.third) }
+            }
+            else -> {
+                list.addView(text("가장 길게 이어진 마디 ${profile.bestCombo}마디  ·  부드러운 정지 모두 ${profile.perfectStops}번", BODY_SP, color = 0xFFC9D3DC.toInt()).apply { setPadding(0, 0, 0, dp(8)) })
+                Badge.entries.chunked(2).forEach { pair -> list.addView(LinearLayout(this).apply { pair.forEach { addView(badgeCard(it, it in profile.badges)) } }) }
+                list.addView(text("음악 해금 — 흔들림 없던 구간의 거리로 열려요", BODY_SP, bold = true).apply { setPadding(0, dp(24), 0, dp(8)) })
+                GenrePack.entries.forEach { g ->
+                    val p = profile.progress(g)
+                    list.addView(row("${g.title}  ·  ${getString(R.string.records_unlock_soon)}", "%.1f / %d km".format(profile.safeKm, g.requiredKm)))
+                    list.addView(ProgressBarView(p), LinearLayout.LayoutParams(MATCH, dp(14)).apply { setMargins(dp(24), 0, dp(24), dp(12)) })
+                }
+            }
+        }
+        page = col
+        root.addView(col, FrameLayout.LayoutParams(MATCH, MATCH))
+    }
+
+    @Suppress("FunctionName")
+    private fun HorizontalScrollViewCompat(child: View) = android.widget.HorizontalScrollView(this).apply { isHorizontalScrollBarEnabled = false; addView(child) }
+
+    /** 해금 진행도 막대(정차 중 화면, 움직임 없음). */
+    @Suppress("FunctionName")
+    private fun ProgressBarView(p: Float) = object : View(this) {
+        val bg = android.graphics.Paint().apply { color = 0x22FFFFFF }
+        val fg = android.graphics.Paint().apply { color = 0xFF8FD3C6.toInt() }
+        override fun onDraw(c: android.graphics.Canvas) {
+            val r = height / 2f
+            c.drawRoundRect(0f, 0f, width.toFloat(), height.toFloat(), r, r, bg)
+            if (p > 0f) c.drawRoundRect(0f, 0f, (width * p).coerceAtLeast(height.toFloat()), height.toFloat(), r, r, fg)
+        }
+    }
+
+    /**
+     * 예시 연주 기록(seed:albums의 6장과 같은 날짜): 비 오는 밤 A(빗길·밤길 배지), 나머지 B·C·A, S는 없음.
+     * → demo:safe를 마치면 '첫 S등급' 배지 하나와 '이번 주 최고 기록'이 나온다. 기기 안에만.
+     */
+    private fun seedPlay() {
+        controller.play.clear()
+        var profile = app.playdrive.play.PlayProfile()
+        // (곡의 점, 완주 여부) — S는 없음
+        val plans = listOf(
+            listOf(84 to true, 72 to true), listOf(79 to true), listOf(61 to false, 74 to true),
+            listOf(45 to false), listOf(77 to true, 58 to true), listOf(88 to true, 81 to true),
+        )
+        controller.albums.all().sortedBy { it.summary.startEpochMs }.forEachIndexed { i, a ->
+            val s = a.summary
+            val plan = plans[i % plans.size]
+            var n = 1
+            val songs = plan.mapIndexed { k, (score, done) ->
+                val song = app.playdrive.play.SongResult(n, if (k > 0 && !plan[k - 1].second) 2 else 1, done, score, app.playdrive.play.PlayRules.grade(score, done), score / 100f, 20 + 7 * k, 1 + k)
+                if (done) n++
+                song
+            }
+            val perf = mapOf(PerfectKind.START to (i % 2), PerfectKind.CHANGE to (if (i % 3 == 0) 1 else 0), PerfectKind.STOP to (1 + i % 3))
+            val r = DriveResult(s.startEpochMs, s.endEpochMs, songs, listOf(18, 31, 12, 9, 22, 40)[i % 6], perf, listOf(2, 1, 3, 5, 1, 2)[i % 6],
+                s.rained, s.movingSeconds * 9f, s.movingSeconds, 1 + i % 4)
+            profile = profile.add(r).first
+        }
+        controller.play.save(profile)
+        Log.i(TAG, "예시 연주 기록 ${profile.results.size}개, 배지 ${profile.badges.keys}")
     }
 
     private fun loadEffect() = runCatching { app.playdrive.ui.EffectLevel.valueOf(getSharedPreferences("settings", MODE_PRIVATE).getString("effect", null) ?: "LIVE") }.getOrDefault(app.playdrive.ui.EffectLevel.LIVE)
@@ -468,7 +736,11 @@ class MainActivity : ComponentActivity(), DriveController.Listener {
     }
 
     // ------------------------------------------------------------------ 신호원
-    private fun startDemo() { lastTapeMs = Long.MIN_VALUE; controller.start(DemoDriveSource(controller.engineHandler) { controller.notifyFinished() }); debugStatus?.text = "데모 드라이브 재생 중" }
+    private fun startDemo(scenario: DriveScenario = app.playdrive.sim.DemoDriveScenario.scenario) {
+        lastTapeMs = Long.MIN_VALUE
+        controller.start(DemoDriveSource(controller.engineHandler, scenario) { controller.notifyFinished() })
+        debugStatus?.text = "${scenario.name} 재생 중"
+    }
 
     private fun requestSpeedThenStart() {
         if (checkSelfPermission(PERM_SPEED) == PackageManager.PERMISSION_GRANTED) startReal() else speedPermission.launch(PERM_SPEED)
@@ -488,6 +760,8 @@ class MainActivity : ComponentActivity(), DriveController.Listener {
      *  --es debug demo | real | stop
      *  --es debug screen:mood | screen:drive | screen:park | screen:breath | screen:album | screen:detail[:n] | screen:debug
      *  --es debug seed:albums   (기존 앨범을 모두 지우고 예시 앨범 6장 생성, 기기 안에만)
+     *  --es debug demo:safe | demo:rough   (연주 기록 시연: 64마디 클라이맥스·S등급 / 흔들림 반복·완주 못함)
+     *  --es debug seed:play | reset:play   (예시 연주 기록 — seed:albums 다음에 / 모두 지움), voice:on|off, screen:result, screen:records[:0~3]
      *  --es debug icon:debug:off|on, icon:demo:off|on   (무드 화면의 디버그·데모·설정 버튼 숨김 — 스크린샷·영상용)
      *  --es debug effect:live|calm   (주행 중 화면 효과, 설정과 같음) / screen:settings
      *  --es debug welcome | goodbye | wake | daypart:MORNING|DAY|EVENING|NIGHT|DAWN|auto | rain:on|off | render:1.0|0.5|canvas
@@ -504,6 +778,28 @@ class MainActivity : ComponentActivity(), DriveController.Listener {
         Log.i(TAG, "debug intent: $cmd")
         when {
             cmd == "demo" -> { showMood(); startDemo() }
+            cmd == "demo:safe" -> { dismissOverlay(); showMood(); startDemo(DriveScenario.SAFE) }    // 흔들림 없이 64마디 → 클라이맥스, S등급
+            cmd == "demo:rough" -> { dismissOverlay(); showMood(); startDemo(DriveScenario.ROUGH) }  // 흔들림이 계속 → 완주 못함
+            cmd == "seed:play" -> seedPlay()
+            cmd == "bars:off" || cmd == "bars:on" -> { // 스크린샷·영상용: 차량 상태바·하단 바 숨김(몰입 모드)
+                val c = window.insetsController
+                if (cmd == "bars:off") { c?.systemBarsBehavior = android.view.WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE; c?.hide(android.view.WindowInsets.Type.systemBars()) }
+                else c?.show(android.view.WindowInsets.Type.systemBars())
+            }
+            cmd == "panel:on" || cmd == "panel:off" -> { // 세로형 보조 패널(약 1:1.6) 미리보기: 앱 전체를 가운데 세로 상자 안에 배치
+                val lp = root.layoutParams as FrameLayout.LayoutParams
+                if (cmd == "panel:on") { val h = (root.parent as View).height; lp.width = (h / 1.6f).toInt(); lp.gravity = Gravity.CENTER }
+                else { lp.width = MATCH; lp.gravity = Gravity.NO_GRAVITY }
+                root.layoutParams = lp
+                root.post { updateGlass(); if (screen == Screen.RESULT) lastReport?.let { showResult(it) { showMood() } } else if (screen == Screen.RECORDS) showRecords(lastRecordsTab) }
+            }
+            cmd == "reset:play" -> controller.play.clear()
+            cmd == "voice:on" -> saveVoice(true)
+            cmd == "voice:off" -> saveVoice(false)
+            cmd == "voice:tts" -> controller.preferTts = true    // Pleos TTS 우선(기본)
+            cmd == "voice:ogg" -> controller.preferTts = false   // 녹음 음성만(시연 녹화: TTS 소리는 앱 믹스에 담기지 않음)
+            cmd == "screen:result" -> { simMoving = false; applyDrivingPolicy(); dismissOverlay(); (lastReport ?: controller.play.load().results.maxByOrNull { it.startEpochMs }?.let { ResultReport(it, emptyList(), false, null) })?.let { lastReport = it; showResult(it) { showMood() } } }
+            cmd.startsWith("screen:records") -> { simMoving = false; applyDrivingPolicy(); dismissOverlay(); showRecords(cmd.substringAfter("screen:records", "").removePrefix(":").toIntOrNull() ?: 0) }
             cmd == "real" -> requestSpeedThenStart()
             cmd == "stop" -> controller.stop()
             cmd == "screen:mood" -> { dismissOverlay(); showMood() }
@@ -638,7 +934,7 @@ class MainActivity : ComponentActivity(), DriveController.Listener {
     companion object {
         private const val TAG = "PlayDrive.UI"
         /** 릴리스 빌드에서도 받는 인텐트 명령(심사·시연용). */
-        private val RELEASE_CMDS = setOf("demo", "seed:albums", "icon:demo:off", "icon:demo:on", "effect:live", "effect:calm")
+        private val RELEASE_CMDS = setOf("demo", "demo:safe", "demo:rough", "seed:albums", "seed:play", "icon:demo:off", "icon:demo:on", "effect:live", "effect:calm", "voice:on", "voice:off", "voice:tts", "voice:ogg")
         private const val PERM_SPEED = "android.car.permission.CAR_SPEED"
         private const val MATCH = ViewGroup.LayoutParams.MATCH_PARENT
         /** 무드 셰이더 해상도 배율(1 = 원래, 0.5 = 절반으로 그린 뒤 확대). 측정 결과로 정함(docs/dev-notes.md). */
@@ -650,6 +946,12 @@ class MainActivity : ComponentActivity(), DriveController.Listener {
         const val BODY_SP = 24f
         const val TITLE_SP = 32f
         private const val PAD_DP = 32
+        // 결과 화면 색: 남색 바탕, 청록 포인트 한 색
+        private const val NAVY = 0xFF0E1830.toInt()
+        private const val CARD = 0xFF16233F.toInt()
+        private const val TEAL = 0xFF8FD3C6.toInt()
+        private const val SOFT = 0xFFA9B6C6.toInt()
+        private const val MUTED_RED = 0xFFB0605F.toInt()
         private const val GAP_DP = 24
     }
 }

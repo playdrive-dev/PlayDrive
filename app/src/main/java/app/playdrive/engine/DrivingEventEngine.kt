@@ -51,6 +51,7 @@ class DrivingEventEngine(private val t: DrivingThresholds = DrivingThresholds())
             is SignalSample.Wiper -> onWiper(sample, out)
             is SignalSample.SeatOccupancy -> onSeat(sample, out)
             is SignalSample.SteeringAngle -> onSteering(sample, out)
+            is SignalSample.Navi -> out += DrivingEvent.Navi(sample.timeMs, sample.signal)
         }
         state = state.copy(timeMs = sample.timeMs, harmony = harmony)
         return out
