@@ -59,8 +59,9 @@ if [[ $WHAT == shots || $WHAT == all || $WHAT == retake ]]; then
   fresh "seed:albums;seed:play;daypart:EVENING"
   T0=$(now_ms); am "demo:safe"
   until_s $((T0 + 49000)); shot 01_driving_sunset_combo        # 16마디 필인 순간(이어진 마디는 소리로만 — 주행 중 글자·숫자 없음)
-  until_s $((T0 + 82000)); shot 04_stopped_redlight            # 부드러운 정지 후 신호 대기(브레이크다운) — 드럼·베이스 물결이 잦아든 뒤
-  panel_shot 04_stopped_redlight
+  # 신호 대기: 72.0초 정차 → 79.2초 출발. 빠진 악기 물결이 잦아든 뒤(패널 먼저 78.0초, 앱 창 78.9초)
+  until_s $((T0 + 76400)); panel_shot 04_stopped_redlight
+  until_s $((T0 + 78900)); shot 04_stopped_redlight
   until_s $((T0 + 134500)); panel_shot 01_driving_sunset_combo # 48마디 필인 순간
   until_s $((T0 + 368000)); shot 05_result_s                   # 도착·주차 → 굿바이 → 오늘의 연주(S·A)
   panel_shot 05_result_s
@@ -97,7 +98,23 @@ if [[ $WHAT == shots || $WHAT == all || $WHAT == retake ]]; then
     am "screen:records:3"; wait_s 2; shot 08_badges_unlock
   fi
   am "screen:album"; wait_s 3; shot 09_mind_album
+  if [[ $WHAT != retake ]]; then
+    am "mode:listen"; wait_s 1; am "screen:songs"; wait_s 2; shot 11_listen_mode   # 듣기 모드 곡 목록
+    am "mode:play"
+  fi
   am "screen:mood"
+fi
+
+# 04(신호 대기) + 07b(비슷한 주행)만 다시
+if [[ $WHAT == fix04 ]]; then
+  echo "[fix] 07b"
+  am "icon:debug:off;icon:demo:off;daypart:NIGHT"; wait_s 10; am "screen:records:1"; wait_s 2.5; shot 07b_records_compare
+  echo "[fix] 04"
+  fresh "daypart:EVENING"
+  T0=$(now_ms); am "demo:safe"
+  until_s $((T0 + 76400)); panel_shot 04_stopped_redlight
+  until_s $((T0 + 78900)); shot 04_stopped_redlight
+  am "stop"
 fi
 
 # ================================================================ 녹화

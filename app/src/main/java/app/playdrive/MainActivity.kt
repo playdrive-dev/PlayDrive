@@ -569,7 +569,7 @@ class MainActivity : ComponentActivity(), DriveController.Listener {
 
     /**
      * 오늘의 연주. reveal = 등장 연출(2.5초 안, 화면을 누르면 바로 끝 모습):
-     * 0.0초 가운데 상태 문구 크게 → 0.8초 위로 작아지며 정리 / 0.6초 숫자 카드 3개 차례로 카운트업 / 1.6초 등급이 커버 위에 도장 찍듯(S = 물결이 한 번 밝게) / 2.0초 결과 음성.
+     * 0.0초 화면 정가운데 상태 문구 크게(커버·카드는 아직 숨김) → 0.8초 왼쪽 위 머리 자리로 / 0.9초 커버, 숫자 카드 3개 차례로 카운트업 / 1.7초 등급이 커버 위에 도장 찍듯(S = 물결이 한 번 밝게) / 2.0초 결과 음성.
      */
     private fun showResult(report: ResultReport, reveal: Boolean = false, onDone: () -> Unit) {
         if (driving) return
@@ -606,46 +606,55 @@ class MainActivity : ComponentActivity(), DriveController.Listener {
         val left = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; if (narrow) gravity = Gravity.CENTER_HORIZONTAL }
         left.addView(coverBox); left.addView(title)
 
-        // 숫자 카드 3개: 완주 곡 / 최장 마디 / MISS
+        // 숫자 카드 3개: 완주 곡 / 최장 마디 / MISS(3번 이상만 붉게) — 오른쪽 폭을 꽉 채우게 크게
         val numbers = listOf(Triple(r.completedSongs, "/${r.attemptedSongs}", "완주 곡"), Triple(r.maxCombo, "", "최장 마디"), Triple(r.misses, "", "MISS"))
         val cardViews = mutableListOf<View>(); val numberViews = mutableListOf<TextView>()
         val cards = LinearLayout(this)
         numbers.forEachIndexed { i, (n, suffix, label) ->
-            val num = text("$n$suffix", if (narrow) 48f else 64f, bold = true, color = if (label == "MISS" && n > 0) RC.RED else Color.WHITE).apply { includeFontPadding = false }
+            val num = text("$n$suffix", if (narrow) 64f else 96f, bold = true, color = if (label == "MISS" && n >= 3) RC.RED else Color.WHITE).apply { includeFontPadding = false }
             numberViews += num
             val card = LinearLayout(this).apply {
-                orientation = LinearLayout.VERTICAL; setPadding(dp(if (narrow) 20 else 28), dp(20), dp(16), dp(20)); background = cardBg()
-                addView(num); addView(text(label, BODY_SP, color = RC.SUB).apply { setPadding(0, dp(6), 0, 0) })
+                orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER_VERTICAL
+                setPadding(dp(if (narrow) 20 else 32), dp(if (narrow) 24 else 40), dp(16), dp(if (narrow) 24 else 40)); background = cardBg()
+                addView(num); addView(text(label, BODY_SP, color = RC.SUB).apply { setPadding(0, dp(10), 0, 0) })
             }
             cardViews += card
-            cards.addView(card, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { if (i > 0) leftMargin = dp(16) })
+            cards.addView(card, LinearLayout.LayoutParams(0, if (narrow) ViewGroup.LayoutParams.WRAP_CONTENT else MATCH, 1f).apply { if (i > 0) leftMargin = dp(16) })
         }
 
-        // 곡별 칩: 곡 번호 + 등급, FAILED = 붉은 테두리, 다시 도전 = RETRY
+        // 곡별 결과: 가로 카드(곡 번호 · 큰 등급 · 그 곡 점). FAILED = 붉은 테두리 + FAILED, 다시 도전 = RETRY
         val chips = LinearLayout(this)
+        val songW = if (r.songs.size > 3) dp(if (narrow) 200 else 260) else 0
         r.songs.forEachIndexed { i, sng ->
             val failed = sng.grade == Grade.FAILED
             chips.addView(LinearLayout(this).apply {
-                gravity = Gravity.CENTER_VERTICAL; setPadding(dp(20), dp(8), dp(10), dp(8))
-                background = GradientDrawable().apply { cornerRadius = dp(40).toFloat(); setColor(RC.CARD); if (failed) setStroke(dp(2), RC.RED) }
-                addView(text("${sng.number}곡", BODY_SP, color = RC.SUB))
-                if (sng.attempt > 1) addView(text("RETRY", BODY_SP, bold = true, color = RC.TEAL).apply { setPadding(dp(12), 0, 0, 0) })
-                addView(text(sng.grade.label, if (failed) BODY_SP else 36f, bold = true, color = if (failed) RC.RED else RC.TEAL_DARK).apply {
-                    includeFontPadding = false; gravity = Gravity.CENTER; minWidth = dp(64); setPadding(dp(16), dp(6), dp(16), dp(6))
-                    background = GradientDrawable().apply { cornerRadius = dp(30).toFloat(); setColor(if (failed) Color.TRANSPARENT else RC.TEAL) }
-                }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { leftMargin = dp(14) })
-            }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { if (i > 0) leftMargin = dp(12) })
+                orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER_VERTICAL; setPadding(dp(28), dp(18), dp(20), dp(18))
+                background = cardBg(RC.CARD, if (failed) RC.RED else null)
+                addView(LinearLayout(this@MainActivity).apply {
+                    gravity = Gravity.CENTER_VERTICAL
+                    addView(text("${sng.number}곡", BODY_SP, color = RC.SUB))
+                    if (sng.attempt > 1) addView(text("RETRY", BODY_SP, bold = true, color = RC.TEAL).apply { setPadding(dp(12), 0, 0, 0) })
+                })
+                addView(LinearLayout(this@MainActivity).apply {
+                    gravity = Gravity.BOTTOM; setPadding(0, dp(6), 0, 0)
+                    addView(text(if (failed) "FAILED" else sng.grade.label, if (failed) 48f else (if (narrow) 64f else 112f), bold = true, color = if (failed) RC.RED else Color.WHITE).apply { includeFontPadding = false })
+                    if (!failed) addView(text("${sng.score}점", TITLE_SP, bold = true, color = RC.SUB).apply { setPadding(dp(14), 0, 0, dp(8)) })
+                })
+            }, LinearLayout.LayoutParams(songW, if (narrow) ViewGroup.LayoutParams.WRAP_CONTENT else MATCH, if (songW == 0) 1f else 0f).apply { if (i > 0) leftMargin = dp(16) })
         }
         if (r.songs.isEmpty()) chips.addView(text("곡을 끝까지 연주하기 전에 도착했어요", BODY_SP, color = RC.SUB))
 
-        // 새 배지: 메달 + 이름
-        val badges = LinearLayout(this).apply { visibility = if (report.newBadges.isEmpty()) View.GONE else View.VISIBLE; gravity = Gravity.CENTER_VERTICAL }
-        report.newBadges.forEach { b ->
-            badges.addView(app.playdrive.ui.MedalView(this, b.glyph, true), LinearLayout.LayoutParams(dp(76), dp(76)))
+        // 새 배지: 메달(기록 탭과 같은 모양) + "새 배지" + 이름, 카드 하나
+        val badges = LinearLayout(this).apply { visibility = if (report.newBadges.isEmpty()) View.GONE else View.VISIBLE }
+        report.newBadges.forEachIndexed { i, b ->
             badges.addView(LinearLayout(this).apply {
-                orientation = LinearLayout.VERTICAL; setPadding(dp(14), 0, dp(28), 0)
-                addView(text("새 배지", BODY_SP, color = RC.TEAL)); addView(text(b.title, BODY_SP, bold = true, color = Color.WHITE))
-            })
+                gravity = Gravity.CENTER_VERTICAL; setPadding(dp(20), dp(16), dp(32), dp(16)); background = cardBg()
+                addView(app.playdrive.ui.MedalView(this@MainActivity, b.glyph, true), LinearLayout.LayoutParams(dp(96), dp(96)))
+                addView(LinearLayout(this@MainActivity).apply {
+                    orientation = LinearLayout.VERTICAL; setPadding(dp(20), 0, 0, 0)
+                    addView(text("새 배지", BODY_SP, bold = true, color = RC.TEAL)); addView(text(b.title, TITLE_SP, bold = true, color = Color.WHITE))
+                })
+            }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { if (i > 0) leftMargin = dp(16) })
         }
 
         val buttons = LinearLayout(this).apply { gravity = Gravity.END or Gravity.CENTER_VERTICAL }
@@ -658,7 +667,7 @@ class MainActivity : ComponentActivity(), DriveController.Listener {
             val body = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(0, dp(20), 0, dp(12)) }
             body.addView(left, LinearLayout.LayoutParams(MATCH, ViewGroup.LayoutParams.WRAP_CONTENT))
             body.addView(cards, LinearLayout.LayoutParams(MATCH, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(20) })
-            body.addView(android.widget.HorizontalScrollView(this).apply { isHorizontalScrollBarEnabled = false; addView(chips) }, LinearLayout.LayoutParams(MATCH, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(20) })
+            body.addView(if (r.songs.size > 3) HorizontalScrollViewCompat(chips) else chips, LinearLayout.LayoutParams(MATCH, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(16) })
             body.addView(badges, LinearLayout.LayoutParams(MATCH, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(16) })
             col.addView(ScrollView(this).apply { isVerticalScrollBarEnabled = false; addView(body) }, LinearLayout.LayoutParams(MATCH, 0, 1f))
             col.addView(demoNote, LinearLayout.LayoutParams(MATCH, ViewGroup.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(8) })
@@ -667,10 +676,11 @@ class MainActivity : ComponentActivity(), DriveController.Listener {
             val body = LinearLayout(this).apply { setPadding(0, dp(24), 0, 0); isBaselineAligned = false }
             body.addView(left, LinearLayout.LayoutParams(0, MATCH, 0.45f))
             val right = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(44), 0, 0, 0) }
-            right.addView(cards, LinearLayout.LayoutParams(MATCH, ViewGroup.LayoutParams.WRAP_CONTENT))
-            right.addView(android.widget.HorizontalScrollView(this).apply { isHorizontalScrollBarEnabled = false; addView(chips) }, LinearLayout.LayoutParams(MATCH, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(36) })
-            right.addView(badges, LinearLayout.LayoutParams(MATCH, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(32) })
-            right.addView(View(this), LinearLayout.LayoutParams(MATCH, 0, 1f))
+            // 오른쪽 폭·높이를 꽉: 숫자 카드와 곡 카드가 남은 높이를 나눠 갖는다
+            right.addView(cards, LinearLayout.LayoutParams(MATCH, 0, 1.15f))
+            right.addView(if (r.songs.size > 3) HorizontalScrollViewCompat(chips) else chips, LinearLayout.LayoutParams(MATCH, 0, 1f).apply { topMargin = dp(20) })
+            right.addView(badges, LinearLayout.LayoutParams(MATCH, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(20) })
+            right.addView(View(this), LinearLayout.LayoutParams(MATCH, dp(20)))
             right.addView(demoNote, LinearLayout.LayoutParams(MATCH, ViewGroup.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(12) })
             right.addView(buttons, LinearLayout.LayoutParams(MATCH, ViewGroup.LayoutParams.WRAP_CONTENT))
             body.addView(right, LinearLayout.LayoutParams(0, MATCH, 0.55f))
@@ -696,6 +706,7 @@ class MainActivity : ComponentActivity(), DriveController.Listener {
         head.alpha = 1f
         cardViews.forEach { it.alpha = 0f; it.translationY = dp(24).toFloat() }
         gradeView.alpha = 0f; scoreView.alpha = 0f
+        coverBox.alpha = 0f   // 상태 문구가 정가운데에 뜨는 동안 커버·카드와 겹치지 않게
         val steps = mutableListOf<Runnable>()
         var done = false
         fun at(ms: Long, block: () -> Unit) { val rn = Runnable { if (!done) block() }; steps += rn; frame.postDelayed(rn, ms) }
@@ -703,7 +714,7 @@ class MainActivity : ComponentActivity(), DriveController.Listener {
             if (done) return
             done = true; steps.forEach { frame.removeCallbacks(it) }
             frame.removeView(big)
-            (listOf<View>(statusSmall, gradeView, scoreView) + fadeIns + cardViews).forEach { it.animate().cancel(); it.alpha = 1f; it.translationY = 0f; it.scaleX = 1f; it.scaleY = 1f }
+            (listOf<View>(statusSmall, gradeView, scoreView, coverBox) + fadeIns + cardViews).forEach { it.animate().cancel(); it.alpha = 1f; it.translationY = 0f; it.scaleX = 1f; it.scaleY = 1f }
             numbers.forEachIndexed { i, (n, suffix, _) -> numberViews[i].text = "$n$suffix" }
             frame.setOnClickListener(null)
         }
@@ -717,22 +728,23 @@ class MainActivity : ComponentActivity(), DriveController.Listener {
             big.animate().translationX((b[0] - a[0]).toFloat()).translationY((b[1] - a[1]).toFloat()).scaleX(k).scaleY(k).setDuration(400)
                 .withEndAction { if (!done) { statusSmall.alpha = 1f; frame.removeView(big) } }.start()
         }
+        at(900) { coverBox.animate().alpha(1f).setDuration(300).start() }
         cardViews.forEachIndexed { i, v ->
-            at(600L + i * 150) {
+            at(900L + i * 150) {
                 v.animate().alpha(1f).translationY(0f).setDuration(250).start()
                 val (n, suffix, _) = numbers[i]
                 countUp(numberViews[i], n, 0) { "$it$suffix" }
             }
         }
-        at(1100) { title.animate().alpha(1f).setDuration(300).start(); chips.animate().alpha(1f).setDuration(300).start() }
-        at(1600) {
+        at(1300) { title.animate().alpha(1f).setDuration(300).start(); chips.animate().alpha(1f).setDuration(300).start() }
+        at(1700) {
             // 등급: 도장 찍듯(살짝 크게 → 제자리)
             gradeView.scaleX = 1.8f; gradeView.scaleY = 1.8f; gradeView.pivotX = 0f; gradeView.pivotY = gradeView.height.toFloat()
             gradeView.animate().alpha(1f).scaleX(1f).scaleY(1f).setDuration(250).setInterpolator(android.view.animation.OvershootInterpolator(2.2f)).start()
             scoreView.animate().alpha(1f).setStartDelay(150).setDuration(250).start()
             if (best?.grade == Grade.S) mood.celebrate(1f) else if (best?.grade == Grade.A) mood.celebrate(0.5f)
         }
-        at(1900) { listOf(badges, buttons, demoNote).forEach { it.animate().alpha(1f).setDuration(300).start() } }
+        at(2000) { listOf(badges, buttons, demoNote).forEach { it.animate().alpha(1f).setDuration(300).start() } }
         at(2500) { finish() }
     }
 
@@ -821,9 +833,11 @@ class MainActivity : ComponentActivity(), DriveController.Listener {
                 }
             }
             1 -> {
-                val sims = latest?.let { profile.similarTo(it) }.orEmpty()
-                val past = sims.maxByOrNull { it.startEpochMs }
-                if (latest == null || past == null) list.addView(note(getString(R.string.records_similar_none)))
+                // 비슷한 주행이 있는 가장 최근 주행(가장 최근 주행이 비교할 상대가 없으면 그 전 것)
+                val base = results.sortedByDescending { it.startEpochMs }.firstOrNull { profile.similarTo(it).isNotEmpty() }
+                val past = base?.let { profile.similarTo(it) }?.maxByOrNull { it.startEpochMs }
+                val today = base?.let { AlbumNaming.dateLine(it.startEpochMs).substringBefore(" ·") == AlbumNaming.dateLine(System.currentTimeMillis()).substringBefore(" ·") } ?: false
+                if (base == null || past == null) list.addView(note(getString(R.string.records_similar_none)))
                 else {
                     fun side(res: DriveResult, label: String) = LinearLayout(this).apply {
                         orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER_HORIZONTAL
@@ -836,14 +850,14 @@ class MainActivity : ComponentActivity(), DriveController.Listener {
                         })
                     }
                     val vs = LinearLayout(this).apply { gravity = Gravity.CENTER; setPadding(dp(24), dp(28), dp(24), dp(28)); background = cardBg() }
-                    vs.addView(side(latest, "오늘"), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+                    vs.addView(side(base, if (today) "오늘" else dayLabel(base.startEpochMs)), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
                     vs.addView(text("VS", if (narrow) 64f else 96f, bold = true, color = RC.TEAL).apply { includeFontPadding = false; setPadding(dp(16), 0, dp(16), 0) })
                     vs.addView(side(past, "지난 ${dayLabel(past.startEpochMs)}"), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
                     list.addView(vs)
-                    val d = past.misses - latest.misses
+                    val d = past.misses - base.misses
                     val line = when { d > 0 -> "지난번보다 MISS ${d}번 줄었어요"; d < 0 -> "지난번보다 MISS ${-d}번 늘었어요"; else -> "지난번과 MISS가 같아요" }
                     list.addView(text(line, 48f, bold = true, color = if (d >= 0) Color.WHITE else RC.RED).apply { setPadding(0, dp(28), 0, dp(8)); gravity = Gravity.CENTER; phraseBreak() }, LinearLayout.LayoutParams(MATCH, ViewGroup.LayoutParams.WRAP_CONTENT))
-                    profile.copy(results = results - latest).compare(latest)?.let { list.addView(note(it).apply { gravity = Gravity.CENTER }, LinearLayout.LayoutParams(MATCH, ViewGroup.LayoutParams.WRAP_CONTENT)) }
+                    profile.copy(results = results - base).compare(base)?.let { list.addView(note(it).apply { gravity = Gravity.CENTER }, LinearLayout.LayoutParams(MATCH, ViewGroup.LayoutParams.WRAP_CONTENT)) }
                     list.addView(note(getString(R.string.records_similar_basis)).apply { setPadding(0, dp(28), 0, 0); gravity = Gravity.CENTER }, LinearLayout.LayoutParams(MATCH, ViewGroup.LayoutParams.WRAP_CONTENT))
                 }
             }
