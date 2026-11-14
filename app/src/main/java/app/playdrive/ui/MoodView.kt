@@ -23,29 +23,23 @@ import androidx.compose.ui.graphics.ShaderBrush
 import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.platform.ViewCompositionStrategy
 import app.playdrive.album.AlbumNaming.PartOfDay
-import app.playdrive.album.CoverSpec
 import app.playdrive.album.MoodState
 import app.playdrive.ui.light.LightParams
 import app.playdrive.ui.light.LightShader
 
 /**
- * 무드 화면. 상태는 [MoodScene](순수·단위 테스트), 그리기는
- *  - API 33+: Compose + AGSL RuntimeShader([LightShader]) — "빛을 재료로 쓰는 화면"
+ * 무드(주행) 화면 = 흐르는 그라데이션 물결. 상태는 [MoodScene]·[WaveMotion](순수·단위 테스트), 그리기는
+ *  - API 33+: Compose + AGSL RuntimeShader([LightShader])
  *  - API 33 미만: Canvas([CanvasMoodLayer])
- * 주행 중(restricted)에는 기본적으로 다시 그리지 않는다 → 마지막 프레임이 그대로 남는다.
- * 예외: 음악 이벤트([music])로 [DriveMotion] 전환이 시작되면 그 전환(≤2초) 동안만 그리고, 끝 프레임을 한 번 더 그린 뒤 다시 멈춘다.
- *
+ * 물결은 지금 들리는 소리([soundSource], 오디오 렌더 시각 기준)를 따라 늘 천천히 흐른다(30fps).
  * renderScale < 1 이면 그 배율로 작게 그린 뒤 확대한다(하드웨어 레이어, 부하 절감).
  */
-class MoodView(context: Context, val renderScale: Float = 1f, forceCanvas: Boolean = false) : FrameLayout(context) {
+class MoodView(context: Context, val renderScale: Float = 1f, forceCanvas: Boolean = false, score: WaveScore = WaveScore.EMPTY) : FrameLayout(context) {
     private fun now() = SystemClock.uptimeMillis()
-    val scene = MoodScene(now())
+    val scene = MoodScene(now(), score = score)
 
-    /** 박 안 위치(0~1) 또는 음악이 쉬면 null. 정차 중 메인 빛 숨쉬기에 쓴다. */
-    var beatSource: () -> Float? = { null }
-
-    /** 주행 중 LIVE 효과용 박 정보(박 위치·박 길이·드럼·들리는 레이어 수). */
-    var beatInfo: () -> Beat? = { null }
+    /** 지금 들리는 소리(매 프레임). 음악이 없으면 null. */
+    var soundSource: () -> Sound? = { null }
 
     /** 주행 중 화면 효과 강도. 다음 출발부터 적용. */
     var effect: EffectLevel
@@ -54,7 +48,7 @@ class MoodView(context: Context, val renderScale: Float = 1f, forceCanvas: Boole
 
     /** 유리 패널(재생·앨범 버튼 뒤, 이 뷰 기준 픽셀). */
     var glass: List<LightParams.Glass> = emptyList()
-        set(v) { if (v != field) { field = v; redraw(force = true) } }
+        set(v) { if (v != field) { field = v; redraw() } }
 
     // Compose 쪽에 "다시 그려라"를 알리는 값
     internal val version = mutableIntStateOf(0)
@@ -82,56 +76,32 @@ class MoodView(context: Context, val renderScale: Float = 1f, forceCanvas: Boole
 
     var restricted: Boolean
         get() = scene.restricted
-        set(v) {
-            if (v == scene.restricted) return
-            scene.setRestricted(v, now())
-            removeCallbacks(driveTick)
-            animating.value = scene.animatingAt(now())   // LIVE면 주행 중에도 프레임 루프
-            redraw(force = true)
-        }
-
-    /** 음악 이벤트(레이어 수, 새 테이프스톱, 비). 주행 중이면 이벤트 반응 전환을 시작하거나 다음 가능 시각으로 미룬다. */
-    fun music(layers: Int, tapeStop: Boolean, rain: Boolean, speedKmh: Float = 0f, turn: app.playdrive.model.TurnSignal = app.playdrive.model.TurnSignal.OFF) {
-        scene.music(layers, tapeStop, rain, now(), speedKmh, turn)
-        if (scene.restricted) scheduleDrive()
-    }
-
-    private val driveTick = Runnable { scene.tick(now()); scheduleDrive() }
-
-    /** 주행 중: 전환 중이면 프레임 루프를 켜고, 끝나면 끝 프레임을 한 번 그린 뒤 루프를 끈다. 다음 할 일이 있으면 그때 깨운다. */
-    private fun scheduleDrive() {
-        removeCallbacks(driveTick)
-        if (!scene.restricted) return
-        val t = now()
-        val moving = scene.animatingAt(t)
-        if (moving != animating.value) {
-            animating.value = moving
-            if (!moving) redraw(force = true)
-            android.util.Log.i("PlayDrive.Mood", if (moving) "주행 중 전환 시작 ${scene.driveTransitions.lastOrNull()}" else "주행 중 전환 끝")
-        }
-        if (moving && layer !is androidx.compose.ui.platform.ComposeView) layer.invalidate()
-        scene.nextWakeMs(t)?.let { postDelayed(driveTick, (it - t).coerceAtLeast(0)) }
-    }
+        set(v) { if (v != scene.restricted) { scene.setRestricted(v, now()); redraw() } }
 
     fun show(s: MoodState, immediate: Boolean = false) { scene.show(s, now(), immediate); redraw() }
-    fun setCover(c: CoverSpec?, immediate: Boolean = false) { scene.setCover(c, now(), immediate); redraw() }
     fun setDayPart(p: PartOfDay, immediate: Boolean = false) { scene.setDayPart(p, now(), immediate); redraw() }
     fun welcome() { scene.welcome(now()); redraw() }
     fun goodbye() { scene.goodbye(now()); redraw() }
     fun wake() { scene.wake(now()); redraw() }
+    /** 결과 화면 S등급: 물결이 한 번 밝게 차오름(주차 중에만). */
+    fun celebrate(strength: Float = 1f) { if (!scene.restricted) scene.waves.celebrate(now(), strength) }
 
-    /** 지금 그릴 프레임. */
-    private var drumsWas = false
+    /** 디버그(wavelog:on): 프레임마다 물결 높이(가운데·양끝)를 로그로 — 한 프레임 변화량 점검(tools/check_wave_log.py). */
+    var waveLog = false
 
+    /** 지금 그릴 프레임(한 프레임에 한 번 — 소리 칸을 이어서 읽는다). */
     fun currentFrame(): MoodFrame {
-        if (!scene.restricted) return scene.frame(now(), beatSource())
-        val b = beatInfo()
-        if (b != null && b.drums != drumsWas) { drumsWas = b.drums; if (b.drums) android.util.Log.i("PlayDrive.Mood", "장면: 드럼 들어옴(드롭)") }
-        return scene.frame(now(), null, b)
+        val t = now()
+        val f = scene.frame(t, soundSource())
+        if (waveLog && width > 0) {
+            val aspect = width.toFloat() / height
+            val h = (0 until 5).joinToString(" ") { i -> listOf(0.15f, aspect / 2, aspect - 0.15f).joinToString(",") { x -> "%.5f".format(WaveGeom.height(f.waves, i, x, aspect)) } }
+            android.util.Log.i("PlayDrive.Wave", "t=$t h=$h e=${f.waves.lines.joinToString(",") { "%.2f/%.2f".format(it.edge, it.glow) }} flat=${"%.2f".format(f.waves.flat)} master=${"%.2f".format(f.master)}")
+        }
+        return f
     }
 
-    private fun redraw(force: Boolean = false) {
-        if (scene.restricted && !force) return
+    private fun redraw() {
         version.intValue++
         layer.invalidate()
     }
@@ -149,9 +119,8 @@ private fun LightBackground(host: MoodView) {
     val version by host.version
     val animating by host.animating
     var tick by remember { mutableLongStateOf(0L) }
-    // 정차 중에만 매 프레임 다시 그린다. 주행 중에는 루프 자체가 없다.
-    // 정차 중 움직임은 10~12초 주기라 30fps면 충분하다(부하 절감).
-    LaunchedEffect(animating) { if (animating) { var last = 0L; while (true) withFrameMillis { if (it - last >= 33) { last = it; tick = it } } } }
+    // 물결은 늘 흐르고 소리에 맞춰 움직인다: 매 프레임(60fps) — 파동이 끊겨 보이지 않게
+    LaunchedEffect(animating) { if (animating) { var last = 0L; while (true) withFrameMillis { tick = it } } }
     val shader = remember { LightShader.create() }
     val brush = remember { ShaderBrush(shader) }
     Spacer(Modifier.fillMaxSize().drawBehind {

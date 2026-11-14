@@ -46,7 +46,7 @@ panel_shot() { # 세로 패널로 바꿔 찍고 되돌림
 }
 fresh() { # 앱을 새로 띄움(웰컴 7초) + 공통 설정
   adb shell am force-stop $PKG; wait_s 1
-  am "icon:debug:off;icon:demo:off;effect:live;voice:on;$1"
+  am "icon:debug:off;icon:demo:off;effect:live;voice:on;mode:play;$1"
   wait_s 9
 }
 CUR_USER=$(adb shell am get-current-user | tr -d '\r')
@@ -59,7 +59,7 @@ if [[ $WHAT == shots || $WHAT == all || $WHAT == retake ]]; then
   fresh "seed:albums;seed:play;daypart:EVENING"
   T0=$(now_ms); am "demo:safe"
   until_s $((T0 + 49000)); shot 01_driving_sunset_combo        # 16마디 필인 순간(이어진 마디는 소리로만 — 주행 중 글자·숫자 없음)
-  until_s $((T0 + 74000)); shot 04_stopped_redlight            # 부드러운 정지 후 신호 대기(브레이크다운)
+  until_s $((T0 + 82000)); shot 04_stopped_redlight            # 부드러운 정지 후 신호 대기(브레이크다운) — 드럼·베이스 물결이 잦아든 뒤
   panel_shot 04_stopped_redlight
   until_s $((T0 + 134500)); panel_shot 01_driving_sunset_combo # 48마디 필인 순간
   until_s $((T0 + 368000)); shot 05_result_s                   # 도착·주차 → 굿바이 → 오늘의 연주(S·A)
@@ -82,8 +82,8 @@ if [[ $WHAT == shots || $WHAT == all || $WHAT == retake ]]; then
   am "stop"
 
   fi
-  echo "[6] demo:rough"
-  fresh "daypart:auto"
+  echo "[6] demo:rough(밤)"
+  fresh "daypart:NIGHT"
   T0=$(now_ms); am "demo:rough"
   until_s $((T0 + 258000)); shot 06_result_failed            # 미완주 1곡 + 다시 완주(C)
   panel_shot 06_result_failed
@@ -91,6 +91,8 @@ if [[ $WHAT == shots || $WHAT == all || $WHAT == retake ]]; then
 
   echo "[7·8·9] 기록·배지·앨범"
   if [[ $WHAT != retake ]]; then
+    am "screen:records:0"; wait_s 2; shot 07a_records_mine
+    am "screen:records:1"; wait_s 2; shot 07b_records_compare
     am "screen:records:2"; wait_s 2; shot 07_records_friends
     am "screen:records:3"; wait_s 2; shot 08_badges_unlock
   fi
@@ -100,8 +102,8 @@ fi
 
 # ================================================================ 녹화
 # 앱 소리는 에뮬레이터 화면 녹화에 담기지 않아(차량 오디오 버스) 앱 최종 믹스를 WAV로 저장해 합친다(record:start|stop, 디버그 빌드).
-record_flow() { # record_flow <safe|rough>
-  local flow=$1; local RAW="$OUT_ABS/raw/$flow"
+record_flow() { # record_flow <safe|rough> [이름 데모명령 "녹화구간" "편집구간" 출력파일]
+  local flow=$1; local NAME=${2:-$1}; local RAW="$OUT_ABS/raw/$NAME"
   mkdir -p "$RAW"; rm -f "$RAW"/*
   # 기기−맥 시계 차이
   local SKEW; SKEW=$(python3 - <<'PY'
@@ -116,18 +118,20 @@ print(int(best[1]))
 PY
 )
   adb logcat -c
-  fresh "seed:albums;seed:play;daypart:auto;record:start"
+  fresh "seed:albums;seed:play;daypart:${DAYPART:-auto};record:start;wavelog:${WAVELOG:-off}"
   local T0 WINDOWS CUTS
   # 녹화 구간(데모 시작 기준 초 "시작:끝")과 편집 구간("구간번호:시작:끝")
-  if [[ $flow == safe ]]; then
+  local DST="$OUT_ABS/demo_$flow.mp4"
+  if [[ -n ${3:-} ]]; then
+    WINDOWS=$3; CUTS=$4; DST=$5
+  elif [[ $flow == safe ]]; then
     WINDOWS="0:46 132:232 340:376"
-    CUTS="1:0:40 2:136:148 2:220:228 3:344:372"
-    am "voice:ogg"; T0=$(now_ms); am "demo:safe"
+    CUTS="1:3:40 2:136:148 2:220:228 3:344:372"   # 처음 3초(물결이 차오르기 전)는 자름
   else
     WINDOWS="0:66 224:266"
     CUTS="1:26:44 1:53:61 2:227:231 2:250:262"
-    am "voice:ogg"; T0=$(now_ms); am "demo:rough"
   fi
+  am "voice:ogg"; T0=$(now_ms); am "demo:$flow"
   local k=0 VS=()
   for w in $WINDOWS; do
     k=$((k + 1)); IFS=: read -r ws we <<< "$w"
@@ -153,6 +157,7 @@ PY
 )
   local STRETCH="asetrate=$(python3 -c "print(48000 / $FIT_B)"),aresample=48000:filter_size=64:cutoff=0.97"
   local X264="-c:v libx264 -preset slow -crf 14 -pix_fmt yuv420p -r $FPS"
+  [[ ${WAVELOG:-off} == on ]] && python3 tools/check_wave_log.py "$RAW/events.log" | sed 's/^/    /' 
   # 녹화 조각마다 소리를 맞춰 붙인다
   for k in "${!VS[@]}"; do
     [[ -f "$RAW/rec$k.webm" ]] || continue
@@ -175,13 +180,26 @@ PY
       -af "afade=t=in:st=0:d=0.25,afade=t=out:st=$(python3 -c "print($dur-0.25)"):d=0.25" $X264 -c:a aac -b:a 256k -ar 48000 "$RAW/cut$i.mp4"
     echo "file 'cut$i.mp4'" >> "$LIST"; i=$((i + 1))
   done
-  ffmpeg -hide_banner -loglevel error -y -f concat -safe 0 -i "$LIST" -c copy -movflags +faststart "$OUT_ABS/demo_$flow.mp4"
-  echo "  demo_$flow.mp4: $(ffprobe -v error -show_entries format=duration -of csv=p=0 "$OUT_ABS/demo_$flow.mp4")초"
-  ffmpeg -hide_banner -i "$OUT_ABS/demo_$flow.mp4" -af volumedetect -f null - 2>&1 | grep -E "mean_volume|max_volume" | sed 's/.*\] /    소리 /'
+  ffmpeg -hide_banner -loglevel error -y -f concat -safe 0 -i "$LIST" -c copy -movflags +faststart "$DST"
+  echo "  $(basename "$DST"): $(ffprobe -v error -show_entries format=duration -of csv=p=0 "$DST")초"
+  ffmpeg -hide_banner -i "$DST" -af volumedetect -f null - 2>&1 | grep -E "mean_volume|max_volume" | sed 's/.*\] /    소리 /'
 }
 
+# 결과 화면 등장 연출 확인 영상(소리 포함, 노을): demo:safe 끝 — 도착·주차 → CLEARED → 카운트업 → 등급 도장 → 결과 음성
+if [[ $WHAT == preview_result ]]; then
+  mkdir -p "$OUT_ABS/preview"
+  DAYPART=EVENING record_flow safe preview_result "350:378" "1:353:375" "$OUT_ABS/preview/result_reveal.mp4"
+fi
+
+# 확인용 짧은 영상(소리 포함): 악기 4 → 6 차오름 / 흔들림 → FAILED → 카운트인 재시작
+if [[ $WHAT == preview ]]; then
+  mkdir -p "$OUT_ABS/preview"; FPS=60; WAVELOG=on
+  [[ ${PREVIEW_ONLY:-} == failed ]] || { echo "[P1] 악기 4 → 6"; record_flow safe preview_fill "2:22" "1:3:18" "$OUT_ABS/preview/preview_fill_4to6.mp4"; }
+  echo "[P2] 흔들림 → FAILED → 카운트인"; record_flow rough preview_failed "28:64" "1:35:43 1:54:61" "$OUT_ABS/preview/preview_failed_countin.mp4"
+fi
+
 if [[ $WHAT == video || $WHAT == all ]]; then
-  echo "[A] demo:safe 녹화"; record_flow safe
-  echo "[B] demo:rough 녹화"; record_flow rough
+  echo "[A] demo:safe 녹화(노을)"; DAYPART=EVENING record_flow safe
+  echo "[B] demo:rough 녹화(밤)"; DAYPART=NIGHT record_flow rough
 fi
 echo "결과: $OUT_ABS"; ls "$OUT_ABS" "$OUT_ABS/panel"

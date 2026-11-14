@@ -81,7 +81,7 @@ class PlayProfileTest {
         p = p.add(r(at(1, 8), 90, misses = 0, moving = 4_000, stops = 9), tz).first   // 길이가 달라 제외
         val today = r(at(0, 8), 95, misses = 0, moving = 1_050, stops = 3)
         assertEquals(2, p.similarTo(today, tz).size)
-        assertEquals("비슷한 주행 2번보다 흔들림이 평균 2번 적었어요", p.compare(today, tz))
+        assertEquals("비슷한 주행 2번보다 MISS가 평균 2번 적었어요", p.compare(today, tz))
         assertNull(PlayProfile().compare(today, tz))
     }
 
@@ -89,6 +89,16 @@ class PlayProfileTest {
         val p = PlayProfile(listOf(r(at(0, 9), 80).copy(safeDistanceM = 150_000f)))
         assertEquals(0.5f, p.progress(GenrePack.CITY_POP), 1e-4f)
         assertEquals(0.15f, p.progress(GenrePack.JAZZ), 1e-4f)
+    }
+
+    @Test fun `배지 진행도와 연속 완주 일수`() {
+        var p = PlayProfile()
+        for (d in 3 downTo 0) p = p.add(r(at(d, 9), 80, perfectStops = 4), tz).first
+        assertEquals(16 to 50, p.badgeProgress(Badge.STOPS_50, at(0, 12), tz))
+        assertEquals(20 to 100, p.badgeProgress(Badge.COMBO_100, at(0, 12), tz))
+        assertEquals(4, p.finishStreakDays(at(0, 12), tz))
+        assertEquals(0, p.finishStreakDays(at(-2, 12), tz))
+        assertEquals(1 to 1, p.add(r(at(0, 13), 95), tz).first.badgeProgress(Badge.FIRST_S, at(0, 14), tz))
     }
 
     // ------------------------------------------------------------------ 주행 중 텍스트·음성 정책

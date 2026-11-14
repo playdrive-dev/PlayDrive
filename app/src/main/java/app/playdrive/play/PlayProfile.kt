@@ -7,14 +7,14 @@ import java.io.File
 import java.util.Calendar
 import java.util.TimeZone
 
-/** 배지(기기 안에만 저장). 이름은 게임 용어 없이. */
-enum class Badge(val title: String, val desc: String) {
-    FIRST_S("첫 S등급", "처음으로 S등급 곡을 완주했어요"),
-    STREAK_7("7일 연속 부드러운 주행", "7일 동안 매일 흔들림 없이 한 곡 이상 완주했어요"),
-    RAIN_FINISH("빗길 완주", "비 오는 길에서 B등급 이상으로 곡을 완주했어요"),
-    NIGHT_FINISH("밤길 완주", "밤에 곡을 끝까지 완주했어요"),
-    STOPS_50("부드러운 정지 50번", "부드러운 정지를 모두 50번 해냈어요"),
-    COMBO_100("100마디 이어서", "흔들림 없이 100마디를 이어 연주했어요"),
+/** 배지(기기 안에만 저장). glyph = 메달 가운데 글자. 용어: 흔들림 = MISS, 판정 성공 = PERFECT(2026-11-14 사용자 결정). */
+enum class Badge(val title: String, val desc: String, val glyph: String) {
+    FIRST_S("첫 S등급", "처음으로 S등급 곡을 완주했어요", "S"),
+    STREAK_7("7일 연속 완주", "7일 동안 매일 MISS 없이 한 곡 이상 완주했어요", "7"),
+    RAIN_FINISH("빗길 완주", "비 오는 길에서 B등급 이상으로 곡을 완주했어요", "비"),
+    NIGHT_FINISH("밤길 완주", "밤에 곡을 끝까지 완주했어요", "밤"),
+    STOPS_50("PERFECT 정지 50번", "PERFECT 정지를 모두 50번 해냈어요", "50"),
+    COMBO_100("100마디 이어서", "MISS 없이 100마디를 이어 연주했어요", "100"),
 }
 
 /** 음악 해금: 흔들림 없던 구간의 누적 거리로. 이번엔 진행도만, 팩은 '준비 중'. */
@@ -85,12 +85,31 @@ data class PlayProfile(
         val dMiss = Math.round(avgMiss - r.misses).toInt()
         val dPerf = Math.round(r.perfectTotal - avgPerfect).toInt()
         return when {
-            dMiss > 0 -> "비슷한 주행 ${n}번보다 흔들림이 평균 ${dMiss}번 적었어요"
-            dMiss < 0 -> "비슷한 주행 ${n}번보다 흔들림이 평균 ${-dMiss}번 많았어요"
-            dPerf > 0 -> "비슷한 주행 ${n}번보다 부드러운 순간이 평균 ${dPerf}번 많았어요"
-            dPerf < 0 -> "비슷한 주행 ${n}번과 흔들림은 같고, 부드러운 순간은 ${-dPerf}번 적었어요"
+            dMiss > 0 -> "비슷한 주행 ${n}번보다 MISS가 평균 ${dMiss}번 적었어요"
+            dMiss < 0 -> "비슷한 주행 ${n}번보다 MISS가 평균 ${-dMiss}번 많았어요"
+            dPerf > 0 -> "비슷한 주행 ${n}번보다 PERFECT가 평균 ${dPerf}번 많았어요"
+            dPerf < 0 -> "비슷한 주행 ${n}번과 MISS는 같고, PERFECT는 ${-dPerf}번 적었어요"
             else -> "비슷한 주행 ${n}번과 비슷하게 연주했어요"
         }
+    }
+
+    /** 배지 진행도(지금, 목표). 받은 배지는 목표와 같다. */
+    fun badgeProgress(b: Badge, now: Long, tz: TimeZone = TimeZone.getDefault()): Pair<Int, Int> = when (b) {
+        Badge.FIRST_S -> (if (b in badges || results.any { r -> r.songs.any { it.grade == Grade.S } }) 1 else 0) to 1
+        Badge.STREAK_7 -> (if (b in badges) 7 else safeStreakDays(now, tz).coerceAtMost(7)) to 7
+        Badge.RAIN_FINISH, Badge.NIGHT_FINISH -> (if (b in badges) 1 else 0) to 1
+        Badge.STOPS_50 -> perfectStops.coerceAtMost(50) to 50
+        Badge.COMBO_100 -> bestCombo.coerceAtMost(100) to 100
+    }
+
+    /** [day]에서 거슬러 올라가며 하루도 빠짐없이 한 곡 이상 완주한 날 수. */
+    fun finishStreakDays(day: Long, tz: TimeZone = TimeZone.getDefault()): Int {
+        fun key(ms: Long) = java.util.Calendar.getInstance(tz).apply { timeInMillis = ms }.let { it.get(java.util.Calendar.YEAR) * 1000 + it.get(java.util.Calendar.DAY_OF_YEAR) }
+        val done = results.filter { it.completedSongs > 0 }.map { key(it.startEpochMs) }.toSet()
+        var n = 0
+        val c = java.util.Calendar.getInstance(tz).apply { timeInMillis = day }
+        while (key(c.timeInMillis) in done) { n++; c.add(java.util.Calendar.DAY_OF_MONTH, -1) }
+        return n
     }
 
     fun similarTo(r: DriveResult, tz: TimeZone = TimeZone.getDefault()): List<DriveResult> {

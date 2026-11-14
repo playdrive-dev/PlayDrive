@@ -82,10 +82,14 @@ class PerformanceLayer(
     private val stickSoft = stick(0.7f, 73)
 
     /** 4박 스틱 카운트인([bar]부터 박마다, 첫 박 강세). 음높이 없음. */
-    fun countIn(bar: Long) { for (k in 0 until 4) scheduled += Scheduled(bar + k.toLong() * timing.beatFrames, if (k == 0) Hit.STICK_ACCENT else Hit.STICK) }
+    fun countIn(bar: Long) { for (k in 0 until 4) scheduled += Scheduled(bar + k.toLong() * timing.beatFrames, if (k == 0) Hit.STICK_ACCENT else Hit.STICK, VisualCue.STICK) }
     /** 다음 곡으로 넘어가는 다운비트 심벌. */
-    fun crash(at: Long) { scheduled += Scheduled(at, Hit.CYMBAL) }
-    private data class Scheduled(val at: Long, val hit: Hit)
+    fun crash(at: Long) { scheduled += Scheduled(at, Hit.CYMBAL, VisualCue.SONG) }
+    /** cue = 화면(물결)에 알릴 순간(울린 격자 위치와 함께 [cues]에 남는다). */
+    private data class Scheduled(val at: Long, val hit: Hit, val cue: VisualCue? = null)
+
+    /** 화면이 소리와 같은 순간 반응하도록 실제로 울린 보상·카운트인 소리를 격자 위치와 함께 남긴다(오디오 스레드가 쓰고 UI가 읽음). */
+    val cues = CueLog()
     private val scheduled = ArrayList<Scheduled>()
     /** 0 없음, 1 연주 악기 합류(박마다 아르페지오), 2 클라이맥스(8분음표 아르페지오 + 다운비트 화음 + 종). */
     var bedLevel = 0; private set
@@ -132,16 +136,16 @@ class PerformanceLayer(
                 val lastBeat = bar - timing.beatFrames
                 for (k in 0 until 4) scheduled += Scheduled(lastBeat + k * timing.beatFrames / 4L, Hit.FILL_ROLL)
                 scheduled += Scheduled(lastBeat, Hit.SWELL)
-                scheduled += Scheduled(bar, Hit.CYMBAL)
+                scheduled += Scheduled(bar, Hit.CYMBAL, VisualCue.FILL)
             }
             is MusicCommand.PerfBed -> bedLevel = cmd.level.coerceIn(0, 2)
             is MusicCommand.PerfReward -> when (cmd.kind) {
-                MusicCommand.Reward.DROP -> { val b = timing.nextBoundary(grid - 1, timing.beatFrames); scheduled += Scheduled(b, Hit.DROP); scheduled += Scheduled(b, Hit.CYMBAL) }
+                MusicCommand.Reward.DROP -> { val b = timing.nextBoundary(grid - 1, timing.beatFrames); scheduled += Scheduled(b, Hit.DROP, VisualCue.DROP); scheduled += Scheduled(b, Hit.CYMBAL) }
                 MusicCommand.Reward.SWELL -> {
                     val end = timing.nextBoundary(grid + timing.beatFrames, timing.beatFrames)
-                    scheduled += Scheduled(end - timing.beatFrames, Hit.SWELL); scheduled += Scheduled(end, Hit.CYMBAL_SOFT)
+                    scheduled += Scheduled(end - timing.beatFrames, Hit.SWELL, VisualCue.SWELL); scheduled += Scheduled(end, Hit.CYMBAL_SOFT)
                 }
-                MusicCommand.Reward.CADENCE -> scheduled += Scheduled(quantize(grid), Hit.CADENCE)
+                MusicCommand.Reward.CADENCE -> scheduled += Scheduled(quantize(grid), Hit.CADENCE, VisualCue.CADENCE)
             }
             else -> Unit
         }
@@ -220,6 +224,7 @@ class PerformanceLayer(
             it.remove()
             if (s.at < grid) continue // 테이프스톱 등으로 지나간 예약은 버린다
             val c = timeline.chordAt(grid - loopOrigin, timing)
+            s.cue?.let { cues.add(grid, it) }
             when (s.hit) {
                 Hit.FILL_ROLL -> { addVoice(if (grid % timing.beatFrames == 0L) shakerAccent else shakerSoft, 0.8f, -0.3f); note(grid, "roll") }
                 Hit.SWELL -> { addVoice(swell, 0.9f, 0f); note(grid, "swell") }
@@ -379,4 +384,22 @@ class PerformanceLayer(
     }
 
     companion object { const val MAX_VOICES = 24 }
+}
+
+/** 화면에 알리는 연주 순간. */
+enum class VisualCue { FILL, DROP, SWELL, CADENCE, STICK, SONG }
+
+/** (격자 위치, 순간) 고리 버퍼. 오디오 스레드가 쓰고 UI가 [between]으로 읽는다. */
+class CueLog(private val capacity: Int = 32) {
+    private val at = LongArray(capacity)
+    private val what = arrayOfNulls<VisualCue>(capacity)
+    private var n = 0L
+    @Synchronized fun add(grid: Long, cue: VisualCue) { val i = (n % capacity).toInt(); at[i] = grid; what[i] = cue; n++ }
+    /** from < 격자 위치 ≤ until 인 순간들(오래된 것부터). */
+    @Synchronized fun between(from: Long, until: Long): List<Pair<Long, VisualCue>> {
+        val out = ArrayList<Pair<Long, VisualCue>>()
+        val start = maxOf(0L, n - capacity)
+        for (k in start until n) { val i = (k % capacity).toInt(); if (at[i] > from && at[i] <= until) out += at[i] to what[i]!! }
+        return out
+    }
 }

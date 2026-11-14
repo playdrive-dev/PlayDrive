@@ -80,11 +80,11 @@ enum class Grade(val label: String) { S("S"), A("A"), B("B"), C("C"), FAILED("FA
 }
 
 enum class PerfectKind(val label: String) {
-    START("부드러운 출발"), CHANGE("깔끔한 차선 변경"), STOP("부드러운 정지"),
+    START("출발"), CHANGE("차선 변경"), STOP("정지"),
     /** 내비 회전 300m 안에서 그 방향 깜빡이 + 급조향 없이 회전. */
-    TURN("깔끔한 회전"),
+    TURN("회전"),
     /** 어린이 보호구역을 들어가서 나올 때까지 제한속도 준수. */
-    ZONE("깔끔한 구간 통과"),
+    ZONE("보호구역"),
 }
 
 /** 흔들림. 깜빡이 없이 회전·제한속도 5초 넘게 초과도 악기 −1. */
@@ -182,6 +182,8 @@ class PlayTracker(
     // 곡
     private var songStartMs = 0L
     private var songBars = 0
+    /** 이번 곡의 마디(0~64, 화면: 곡이 진행될수록 물결이 높아짐). */
+    val songBar: Int get() = songBars
     private var gaugeSum = 0
     private var songLongest = 0
     private var songPerfects = 0

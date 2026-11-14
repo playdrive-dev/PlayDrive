@@ -89,6 +89,21 @@ class LoopMixer(
     /** 루프 처음이 시작된 격자 위치(곡 처음부터 이후 = 그 순간). 코드 타임라인도 같은 기준. */
     var loopOrigin = 0L
         private set
+    /** 마지막으로 예약한 '곡 처음부터' 격자 위치(지나가도 지우지 않음 — 화면은 들리는 위치와 비교한다). */
+    @Volatile var restartMark = -1L
+        private set
+    /** 마지막 '곡 처음부터'가 카운트인이었는지. */
+    @Volatile var restartCountIn = false
+        private set
+    /** 화면용: 지금 진행 중이거나 마지막 테이프 스톱의 시작·복귀 격자 위치(-1 = 없음). */
+    @Volatile var tapeStartMark = -1L
+        private set
+    @Volatile var tapeResumeMark = -1L
+        private set
+    val tapeRampFramesPublic: Long get() = tapeRampFrames
+    private val origins = ArrayDeque<Long>().apply { addLast(0L) }
+    /** 격자 위치 [frame]에서의 곡 시작 위치(들리는 위치는 믹서보다 늦으므로 기록에서 찾는다). */
+    fun originAt(frame: Long): Long = synchronized(origins) { origins.lastOrNull { it <= frame } ?: origins.first() }
 
     private val queue = ConcurrentLinkedQueue<MusicCommand>()
     private data class Pending(val layer: Int, val on: Boolean, val atFrame: Long, val fast: Boolean)
@@ -181,6 +196,7 @@ class LoopMixer(
             if (restartAt == gridFrame) {
                 restartAt = -1; loopOrigin = gridFrame; readPos = 0.0
                 performance?.loopOrigin = gridFrame
+                synchronized(origins) { origins.addLast(gridFrame); while (origins.size > 8) origins.removeFirst() }
             }
             if (pending.isNotEmpty()) applyDue()
 
@@ -336,6 +352,7 @@ class LoopMixer(
                 is MusicCommand.RestartSong -> {
                     val b = timing.nextBoundary(gridFrame, timing.barFrames)
                     restartAt = if (c.countIn) b + timing.barFrames else b
+                    restartMark = restartAt; restartCountIn = c.countIn
                     if (c.countIn) performance?.countIn(b) else performance?.crash(b)
                 }
                 is MusicCommand.Speak -> { if (voiceQueue.isNotEmpty() || voice != null) voiceGapLeft = voiceGapLeft.coerceAtLeast(0); c.clips.forEach { voiceQueue.addLast(it) }; speaking = true }
@@ -364,6 +381,7 @@ class LoopMixer(
         tapeStart = gridFrame
         tapeL.reset(); tapeR.reset(); tapeLpCounter = 0
         tapeResume = timing.nextBoundary(gridFrame + tapeRampFrames + (0.15 * sr).toLong(), timing.barFrames)
+        tapeStartMark = tapeStart; tapeResumeMark = tapeResume
         performance?.silence(gridFrame, tapeResume)
     }
 

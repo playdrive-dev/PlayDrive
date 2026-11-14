@@ -65,7 +65,10 @@ class DriveController(context: Context, private val listener: Listener) {
     private var session: PlaybackSession? = null
     private var engine = DrivingEventEngine()
     private var conductor = app.playdrive.play.Conductor(timing, Layer.entries.toSet(), StemConfig.arrangement)
-    private val director get() = conductor.director
+    /** 듣기 모드(게이지·판정·FAILED·등급·연주 기록·게임 음성 없음, 악기 6개). 주차 중에만 바뀐다([setListen]). */
+    @Volatile var listen = false; private set
+    private var listenConductor = app.playdrive.play.ListenConductor(timing, Layer.entries.toSet(), StemConfig.arrangement)
+    private val director get() = if (listen) listenConductor.director else conductor.director
     private var source: VehicleSignalSource? = null
     private val recent = ArrayDeque<DrivingEvent>()
     private var lastUiMs = 0L
@@ -83,6 +86,12 @@ class DriveController(context: Context, private val listener: Listener) {
     /** 화면용(빛 원 = 남은 악기 수, 연주 정지 때 어둡게). 엔진 스레드가 쓰고 UI가 읽는다. */
     @Volatile var lifeGauge = 0; private set
     @Volatile var lifeStopped = false; private set
+    // 화면용 주행 상태(엔진 스레드가 쓰고 UI가 읽는다)
+    @Volatile private var countInNow = false
+    @Volatile private var songBarNow = 0
+    @Volatile private var movingNow = false
+    @Volatile private var rainNow = false
+    @Volatile private var turnNow = app.playdrive.model.TurnSignal.OFF
     /** 설정의 '음성 안내'(기본 켜짐). */
     var voiceEnabled: Boolean
         get() = voicePolicy.enabled
@@ -105,6 +114,7 @@ class DriveController(context: Context, private val listener: Listener) {
         audio = AudioOutput(m, timing.sampleRate).also { it.start() }
         voiceClips = VoiceClips(appContext, timing.sampleRate).also { it.warmUp() }
         conductor = app.playdrive.play.Conductor(timing, m.availableLayers, StemConfig.arrangement)
+        listenConductor = app.playdrive.play.ListenConductor(timing, m.availableLayers, StemConfig.arrangement)
         pleosVoice = app.playdrive.voice.PleosVoice(appContext, engineHandler,
             onTalking = { on -> mixer?.submit(MusicCommand.VoiceDuck(on)) },
             onFallback = { line -> speakOgg(line) }).also { it.init() }
@@ -121,6 +131,7 @@ class DriveController(context: Context, private val listener: Listener) {
         engine = DrivingEventEngine()
         sketch = CoverSketch { System.currentTimeMillis() }
         conductor = app.playdrive.play.Conductor(timing, mixer?.availableLayers ?: Layer.entries.toSet(), StemConfig.arrangement)
+        listenConductor = app.playdrive.play.ListenConductor(timing, mixer?.availableLayers ?: Layer.entries.toSet(), StemConfig.arrangement)
         mixer?.submit(MusicCommand.PerfBed(0)); mixer?.submit(MusicCommand.Muffle(0))
         recent.clear()
         mixer?.let { m -> Layer.entries.forEach { m.submit(MusicCommand.SetLayer(it, false)) } }
@@ -188,17 +199,57 @@ class DriveController(context: Context, private val listener: Listener) {
         return (f % timing.beatFrames).toFloat() / timing.beatFrames
     }
 
-    /** 주행 중 LIVE 화면 효과용: 박 위치·박 길이·드럼이 들리는지·들리는 레이어 수(오디오 믹서 기준). */
-    fun beatInfo(): app.playdrive.ui.Beat? {
+    private var lastCueFrame = -1L
+
+    /** 연주 ↔ 듣기. 주행 중(움직이는 중이거나 출발 후 주차 전)에는 무시한다 — UI도 버튼을 막는다. */
+    fun setListen(on: Boolean) = engineHandler.post {
+        if (on == listen) return@post
+        if (engine.state.moving || conductor.tracker.inDrive) { Log.i(TAG, "모드 전환 거부(주행 중)"); return@post }
+        val avail = mixer?.availableLayers ?: Layer.entries.toSet()
+        listen = on
+        // 새 모드의 연출을 새로 시작(지금 상태의 레이어를 처음부터 다시 맞춤), 연주 모드의 먹먹함·보상 연주는 끔
+        if (on) listenConductor = app.playdrive.play.ListenConductor(timing, avail, StemConfig.arrangement)
+        else conductor = app.playdrive.play.Conductor(timing, avail, StemConfig.arrangement)
+        mixer?.let { it.submit(MusicCommand.Muffle(0)); it.submit(MusicCommand.PerfBed(0)) }
+        lifeGauge = 0; lifeStopped = false
+        Log.i(TAG, "모드: ${if (on) "듣기" else "연주"}")
+    }
+
+    /**
+     * 주행 화면 물결용 '지금 들리는 소리'(UI 스레드, 프레임마다 한 번). 모든 값은 들리는 격자 위치(오디오 출력 지연을 뺀 위치) 기준:
+     * 들리는 악기, 물결 악보 칸(곡 시작부터), 그 사이 울린 연주 순간(보상·필인·스틱), 테이프 스톱 진행, 카운트인.
+     */
+    fun sound(): app.playdrive.ui.Sound? {
         val m = mixer ?: return null
-        val a = m.activeLayersAt(audibleFrame(m))
+        val f = audibleFrame(m)
         val on = playing
-        return app.playdrive.ui.Beat(
-            phase = beatPhase(),
-            beatMs = timing.beatFrames * 1000f / timing.sampleRate,
-            drums = on && Layer.DRUMS in a,
-            layers = if (on) a.size else 0,
-            life = if (on) lifeGauge else -1, stopped = on && lifeStopped,
+        val layers = m.activeLayersAt(f)
+        val score = timing.loopFrames == app.playdrive.ui.WaveScore.LOOP_FRAMES
+        val pos = if (score) Math.floorMod(f - m.originAt(f), timing.loopFrames.toLong()) else 0L
+        val step = if (score) (pos / app.playdrive.ui.WaveScore.HOP).toInt() else -1
+        val frac = if (score) (pos % app.playdrive.ui.WaveScore.HOP).toFloat() / app.playdrive.ui.WaveScore.HOP else 0f
+        // 연주 순간은 미리(약 100ms) 읽어 정점이 소리에 오게: (순간, 들리기까지 ms). 믹서는 출력 지연만큼 앞서 있어 이미 기록돼 있다.
+        val ahead = f + timing.sampleRate / 10
+        val from = if (lastCueFrame in 0..ahead) lastCueFrame else f - 1
+        val cues = m.performance?.cues?.between(from, ahead)?.map { (g, c) -> c to (g - f) * 1000f / timing.sampleRate }.orEmpty()
+        lastCueFrame = ahead
+        val ts = m.tapeStartMark
+        val tape = if (ts >= 0 && f >= ts && f < m.tapeResumeMark) ((f - ts).toFloat() / m.tapeRampFramesPublic).coerceIn(0f, 1f) else -1f
+        val inst = buildSet {
+            for (l in layers) when (l) {
+                Layer.PAD -> add(app.playdrive.ui.Inst.PAD); Layer.CHORDS -> add(app.playdrive.ui.Inst.CHORDS)
+                Layer.HIHAT -> add(app.playdrive.ui.Inst.HIHAT); Layer.BASS -> add(app.playdrive.ui.Inst.BASS)
+                Layer.DRUMS -> add(app.playdrive.ui.Inst.DRUMS); Layer.MELODY -> add(app.playdrive.ui.Inst.MELODY)
+                else -> Unit
+            }
+        }
+        return app.playdrive.ui.Sound(
+            playing = on, on = if (on) inst else emptySet(), step = step, stepFrac = frac, cues = if (on) cues else emptyList(),
+            tape = if (on) tape else -1f,
+            countIn = on && !listen && m.restartCountIn && m.restartMark > f,
+            life = if (on && !listen) lifeGauge else -1, stopped = on && !listen && lifeStopped,
+            songBar = if (listen) ((Math.floorMod(f - m.originAt(f), Long.MAX_VALUE) / timing.barFrames) % 64).toInt() else songBarNow, climax = on && (m.performance?.bedLevel ?: 0) >= 2,
+            moving = movingNow, rain = rainNow, turn = turnNow,
         )
     }
 
@@ -238,10 +289,14 @@ class DriveController(context: Context, private val listener: Listener) {
 
     private fun process(sample: SignalSample) {
         val events = engine.onSample(sample)
-        val co = conductor.update(engine.state, events)
+        val co = if (listen) listenConductor.update(engine.state, events) else conductor.update(engine.state, events)
         val cmds = co.commands
         val result = co.result
-        lifeGauge = conductor.gauge; lifeStopped = conductor.mode == app.playdrive.play.PlayMode.FAILED
+        if (!listen) {
+            lifeGauge = conductor.gauge; lifeStopped = conductor.mode == app.playdrive.play.PlayMode.FAILED
+            countInNow = conductor.mode == app.playdrive.play.PlayMode.COUNT_IN; songBarNow = conductor.tracker.songBar
+        }
+        engine.state.let { movingNow = it.moving; rainNow = it.raining; turnNow = it.turnSignal }
         val newCover = if (sketch.update(engine.state, events)) sketch.spec() else null
         recorder.update(engine.state, events)?.let { summary ->
             // 주행하며 그린 커버가 그대로 새 앨범의 커버가 된다
@@ -270,7 +325,7 @@ class DriveController(context: Context, private val listener: Listener) {
             val list = recent.toList()
             val layers = director.layers
             val a = audio
-            val dbg = "악기=${conductor.gauge} ${conductor.mode} 곡=${conductor.tracker.songNumber}-${conductor.tracker.attempt} 이어진=${conductor.tracker.combo} 렌더부하=${"%.1f".format(a?.renderLoadPercent ?: 0f)}% underrun=${a?.underruns ?: 0} 출력지연=${(a?.latencyFrames ?: 0) * 1000 / timing.sampleRate}ms"
+            val dbg = (if (listen) "듣기 " else "") + "악기=${conductor.gauge} ${conductor.mode} 곡=${conductor.tracker.songNumber}-${conductor.tracker.attempt} 이어진=${conductor.tracker.combo} 렌더부하=${"%.1f".format(a?.renderLoadPercent ?: 0f)}% underrun=${a?.underruns ?: 0} 출력지연=${(a?.latencyFrames ?: 0) * 1000 / timing.sampleRate}ms"
             if (now - lastDbgLogMs >= 5_000) { lastDbgLogMs = now; Log.i(TAG, "상태 v=${"%.1f".format(state.speedMps * 3.6f)}km/h layers=$layers $dbg") }
             main.post { listener.onUpdate(state, list, layers, dbg) }
         }

@@ -9,25 +9,41 @@
     <string name="settings_voice">음성 안내</string>
     <string name="settings_voice_on">켜기</string>
     <string name="settings_voice_off">끄기</string>
-    <!-- 연주 기록 (정차 중에만). 게임 용어를 쓰지 않는다: 이어진 마디, 부드러운 출발/정지, 깔끔한 차선 변경, 흔들림 -->
+    <!-- 연주 기록 (정차 중에만). 용어: MISS(흔들림), PERFECT(판정 성공), 이어진 마디 -->
     <string name="result_title">오늘의 연주</string>
     <string name="result_failed">오늘은 연주를 완주하지 못했어요</string>
     <string name="result_failed_hint">부드럽게 달리면 다음엔 끝까지 연주할 수 있어요</string>
     <string name="result_weekly_best">이번 주 최고 기록이에요</string>
     <string name="result_new_badge">새 배지를 얻었어요</string>
     <string name="result_ok">확인</string>
+    <string name="result_detail">자세히</string>
+    <string name="result_miss_meaning">MISS = 급가속·급제동·급조향·깜빡이 없는 회전·제한속도 초과. 한 번마다 악기가 하나 빠져요.</string>
+    <string name="records_similar_basis">비교 기준: 움직인 시간·정차 횟수·시간대가 비슷한 주행(위치는 저장하지 않아요)</string>
     <string name="result_demo_zone_note">보호구역·회전·도착은 시연용 경로 데이터예요. 실차에서는 Pleos 내비 값을 씁니다.</string>
     <string name="records_title">연주 기록</string>
     <string name="records_tab_mine">내 기록</string>
     <string name="records_tab_similar">비슷한 주행</string>
-    <string name="records_tab_friends">친구 기록(예시)</string>
-    <string name="records_tab_badges">배지·음악</string>
+    <string name="records_tab_friends">친구</string>
+    <string name="records_tab_badges">배지</string>
     <string name="records_empty">아직 기록이 없어요. 주차하면 오늘의 연주가 기록돼요.</string>
     <string name="records_similar_none">아직 비슷한 주행이 없어요. 위치는 저장하지 않고, 움직인 시간·정차 횟수·시간대가 비슷한 주행끼리 비교해요.</string>
-    <string name="records_friends_note">예시 데이터예요. 실제 친구 기록이 아니에요(계정·공유 기능은 다음 단계).</string>
+    <string name="records_friends_note">예시 데이터예요(계정·공유 기능은 다음 단계).</string>
     <string name="records_unlock_soon">준비 중</string>
     <!-- 드라이브 앨범 -->
     <string name="album_title">드라이브 앨범</string>
     <string name="album_empty">아직 앨범이 없어요. 오늘의 드라이브가 첫 장이 됩니다.</string>
     <string name="album_new">새 앨범이 생겼어요</string>
+    <!-- 연주 / 듣기 -->
+    <string name="mode_play">연주</string>
+    <string name="mode_listen">듣기</string>
+    <string name="songs_title">곡 목록</string>
+    <string name="songs_note">듣기 모드: 곡의 모든 악기가 처음부터 끝까지 흘러요. 출발·신호 대기·비에만 가볍게 반응해요.</string>
+    <string name="songs_song_sub">악기 %1$d개  ·  %2$d BPM</string>
+    <string name="songs_now">지금 듣는 곡</string>
+    <string name="songs_genres">장르</string>
+    <string name="songs_unlocked">열림</string>
+    <string name="songs_locked">잠김</string>
+    <string name="songs_basic_genre">기본 팩에 들어 있어요</string>
+    <string name="songs_coming">뮤직팩으로 곡이 추가될 예정이에요</string>
+    <string name="songs_locked_sub">연주 모드에서 MISS 없이 %1$dkm 달리면 열려요</string>
 </resources>

@@ -4,7 +4,10 @@ import app.playdrive.album.AlbumNaming
 import app.playdrive.album.AlbumNaming.PartOfDay
 import app.playdrive.album.CoverArt
 import app.playdrive.album.CoverSpec
+import app.playdrive.ui.Inst
 import app.playdrive.ui.MoodFrame
+import app.playdrive.ui.WaveMotion
+import app.playdrive.ui.WaveState
 import java.util.Calendar
 import java.util.TimeZone
 import kotlin.math.PI
@@ -14,34 +17,34 @@ import kotlin.math.cos
 import kotlin.math.pow
 import kotlin.math.sin
 import kotlin.math.sqrt
+import kotlin.random.Random
 
 /**
- * 셰이더 uniform 값(순수 Kotlin). MoodFrame / CoverSpec → 이름별 FloatArray.
- * 같은 입력이면 같은 값(시계·난수 없음) → "주행 중 프레임 불변"이 렌더러까지 이어진다.
- *
+ * 셰이더 uniform 값(순수 Kotlin). MoodFrame / CoverSpec → 이름별 FloatArray. 같은 입력이면 같은 값.
  * 좌표: p = 픽셀 / 높이 → y 0~1(위→아래), x 0~가로세로비.
  */
 object LightParams {
-    const val MAX_LIGHTS = 14
     const val MAX_SCARS = 4
     const val MAX_GLASS = 4
 
     /**
-     * 시간대 색온도(sRGB 0~1): 위, 아래, 바닥 반사 띠 근처 빛.
-     * sun = 햇빛 하이라이트(x = 가로 비율 0~1, y, 반지름, 세기), sunCol = 그 색. 세기 0이면 없음.
+     * 시간대 색(sRGB 0~1), 채도 낮게 2~3색만: 바탕 위·아래, 물결, 포인트(물결 가장자리·멜로디·바닥 앰비언트 선).
+     * band = 노을의 지평선 쪽 물결 끝(맨 뒤 물결 가장자리)에만 얹는 얇은 색(r, g, b, 세기). 세기 0이면 없음.
      */
-    data class Palette(val top: FloatArray, val bottom: FloatArray, val horizon: FloatArray, val sun: FloatArray = FloatArray(4), val sunCol: FloatArray = FloatArray(3),
-                       /** 지평선(바닥 빛 띠) 바로 위의 얇은 색 띠: r, g, b, 두께(화면 높이 비율). 바탕에 최대 72% 섞는다. 두께 0이면 없음. */
-                       val band: FloatArray = FloatArray(4))
+    data class Palette(val top: FloatArray, val bottom: FloatArray, val wave: FloatArray, val accent: FloatArray, val band: FloatArray = FloatArray(4),
+                       /** 바닥 앰비언트 선(차량 대시보드 아래 청록 라인과 이어지게) — 모든 시간대 #3FD0C0 계열. */
+                       val ambient: FloatArray = rgb(0x3FD0C0))
 
     fun palette(p: PartOfDay): Palette = when (p) {
-        PartOfDay.DAWN -> Palette(f(0.07f, 0.075f, 0.15f), f(0.02f, 0.025f, 0.05f), f(0.30f, 0.22f, 0.42f))
-        // 옅은 청회색 + 오른쪽 위 옅은 금빛 햇빛
-        PartOfDay.MORNING -> Palette(f(0.30f, 0.35f, 0.40f), f(0.11f, 0.14f, 0.17f), f(0.55f, 0.60f, 0.64f), f(0.94f, 0.0f, 0.34f, 0.85f), f(1.0f, 0.83f, 0.50f))
-        PartOfDay.DAY -> Palette(f(0.06f, 0.26f, 0.30f), f(0.02f, 0.10f, 0.13f), f(0.30f, 0.62f, 0.62f))       // 맑은 청록
-        // 노을: 남색 중심(위 #0E1A3A → 아래 #1F2F5C), 주황은 지평선 근처 얇은 띠(#C9805A)로만. 보조 빛은 옅은 남청색.
-        PartOfDay.EVENING -> Palette(rgb(0x0E1A3A), rgb(0x1F2F5C), rgb(0x8C9BD6), band = rgb(0xC9805A).let { f(it[0], it[1], it[2], 0.045f) })
-        PartOfDay.NIGHT -> Palette(f(0.025f, 0.04f, 0.09f), f(0.004f, 0.007f, 0.018f), f(0.12f, 0.16f, 0.32f)) // 깊은 남색-검정
+        PartOfDay.DAWN -> Palette(rgb(0x060A18), rgb(0x1A2850), rgb(0x3A508C), rgb(0xA4B4EC), ambient = rgb(0x46C8C0))
+        // 아침: 짙은 청회색 → 맑은 하늘빛 청색, 포인트 연한 금빛
+        PartOfDay.MORNING -> Palette(rgb(0x1E3046), rgb(0x5E9CCB), rgb(0x9CCBEC), rgb(0xF2DFAA), ambient = rgb(0x5ED6CA))
+        // 한낮: 짙은 청록 → 맑은 청록
+        PartOfDay.DAY -> Palette(rgb(0x022126), rgb(0x16807B), rgb(0x45BDB2), rgb(0xA8EDE2))
+        // 노을: 남색 #0E1A3A → 밝은 남색, 지평선 쪽 물결 끝에만 #C9805A
+        PartOfDay.EVENING -> Palette(rgb(0x0E1A3A), rgb(0x2C437F), rgb(0x5670B8), rgb(0xA6B6EE), band = rgb(0xC9805A).let { f(it[0], it[1], it[2], 0.85f) })
+        // 밤: 검은 남색 → 남색, 포인트 청록 #3FD0C0(앰비언트 라인 색)
+        PartOfDay.NIGHT -> Palette(rgb(0x02040A), rgb(0x0F1F4E), rgb(0x24418C), rgb(0x3FD0C0))
     }
 
     // ---- OKLab / OKLCh (그라데이션 보간용) ----
@@ -76,7 +79,6 @@ object LightParams {
     /** 위·아래 색을 OKLCh로: 색상각은 짧은 쪽으로 돌도록 아래 쪽을 펼친다(셰이더는 그냥 선형 보간). */
     fun gradientLch(top: FloatArray, bottom: FloatArray): Pair<FloatArray, FloatArray> {
         val a = oklch(top); val b = oklch(bottom)
-        // 거의 회색인 쪽은 색상각이 의미 없음 → 다른 쪽 색상각을 쓴다
         if (a[1] < 0.02f) a[2] = b[2]
         if (b[1] < 0.02f) b[2] = a[2]
         var d = b[2] - a[2]
@@ -92,160 +94,107 @@ object LightParams {
         return srgb(FloatArray(3) { a[it] + (b[it] - a[it]) * t })
     }
 
-    fun partOf(epochMs: Long, tz: TimeZone = TimeZone.getDefault()): PartOfDay =
+    /** 촬영용(debug daypart:…): 커버 색도 이 시간대로. null = 주행 시각대로. */
+    @Volatile var coverDayOverride: PartOfDay? = null
+
+    fun partOf(epochMs: Long, tz: TimeZone = TimeZone.getDefault()): PartOfDay = coverDayOverride ?:
         AlbumNaming.partOfDay(Calendar.getInstance(tz).apply { timeInMillis = epochMs }.get(Calendar.HOUR_OF_DAY))
 
     private fun f(vararg v: Float) = v
     private fun mix(a: FloatArray, b: FloatArray, k: Float) = FloatArray(a.size) { a[it] + (b[it] - a[it]) * k }
-    private fun rgb(c: Int) = f(((c shr 16) and 0xFF) / 255f, ((c shr 8) and 0xFF) / 255f, (c and 0xFF) / 255f)
-    private fun easeOut(k: Float) = 1f - (1f - k) * (1f - k) * (1f - k)
-    private fun tau(t: Float, period: Float) = sin(2 * PI * t / period).toFloat()
+    fun rgb(c: Int) = f(((c shr 16) and 0xFF) / 255f, ((c shr 8) and 0xFF) / 255f, (c and 0xFF) / 255f)
 
     /** 유리 패널(픽셀 좌표 l,t,r,b + 모서리 반지름). */
     data class Glass(val l: Float, val t: Float, val r: Float, val b: Float, val radius: Float)
 
-    /** 무드 화면. w,h = 그릴 영역 픽셀. */
+    /** 무드(주행) 화면. w,h = 그릴 영역 픽셀. */
     fun mood(fr: MoodFrame, w: Float, h: Float, glass: List<Glass> = emptyList(), scale: Float = 1f): Map<String, FloatArray> {
-        val aspect = w / h
-        val t = fr.timeSec
-        val pal = mix3(palette(fr.dayFrom), palette(fr.dayTo), fr.dayMix)
-        val s = fr.mood
-        // 메인 빛: 화면 중앙보다 약간 위. 10초·12초 주기의 아주 느린 흔들림과 크기 숨쉬기.
-        val tone = AlbumNaming.lerpColor(0xFFE59A5C.toInt(), 0xFF6CC3B5.toInt(), s.calm)
-        val heatK = 1f + 0.15f * fr.heat   // LIVE 속도 색: 채도·밝기 최대 +15%
-        val mainColor = saturate(mix(f(1f, 0.87f, 0.72f), rgb(tone), 0.55f), heatK)
-        val bloomIn = 0.55f + 0.45f * fr.master
-        val sinkY = 0.06f * fr.sink        // LIVE 테이프스톱: 빛이 아래로 가라앉음
-        // mainScale·mainGain = 주행 중 이벤트 반응(DriveMotion), 정차 중엔 1
-        val mainR = 0.14f * (1f + 0.45f * s.energy) * (1f + 0.025f * tau(t, 12f)) * bloomIn * fr.mainScale
-        val mainI = (0.55f + 0.25f * s.brightness + 0.2f * s.energy) * fr.pulse * fr.moodAlpha.coerceAtLeast(0.55f) * fr.mainGain * (1f + 0.15f * fr.heat)
-        val main = f(aspect / 2 + 0.012f * tau(t, 10f), 0.40f + 0.008f * tau(t + 2.5f, 12f) + sinkY, mainR, mainI)
-
-        // 보조 빛: 깊은 곳의 은은한 빛 2개 + 오늘 커버의 겹(최근 6개, 오래된 겹일수록 깊이)
-        val lights = FloatArray(MAX_LIGHTS * 4); val cols = FloatArray(MAX_LIGHTS * 4)
-        var n = 0
-        fun add(x: Float, y: Float, r: Float, depth: Float, c: FloatArray, a: Float) {
-            if (n >= MAX_LIGHTS) return
-            lights[n * 4] = x; lights[n * 4 + 1] = y + sinkY * 0.7f; lights[n * 4 + 2] = r; lights[n * 4 + 3] = depth
-            cols[n * 4] = c[0]; cols[n * 4 + 1] = c[1]; cols[n * 4 + 2] = c[2]; cols[n * 4 + 3] = a; n++
-        }
-        val gain = 0.55f + 0.45f * fr.bright
-        add(aspect * 0.20f + 0.010f * tau(t, 12f), 0.28f, 0.11f * bloomIn, 0.9f, pal.horizon, 0.30f * gain)
-        add(aspect * 0.82f + 0.008f * tau(t + 4f, 10f), 0.22f, 0.08f * bloomIn, 0.7f, mix(pal.horizon, mainColor, 0.5f), 0.26f * gain)
-        val ring = FloatArray(4)
-        // 테이프스톱 흔적(물결 흩어짐)은 앨범 커버에만. 실시간 무드 화면의 물결은 늘 매끈하게.
-        val scars = FloatArray(MAX_SCARS * 4); val ns = 0
-        val c = fr.cover
-        if (c != null) {
-            val side = 1.08f * minOf(aspect, 1f)
-            val ox = aspect / 2 - side / 2; val oy = 0.46f - side / 2
-            val from = (c.layers.size - 6).coerceAtLeast(0)
-            for (i in from until c.layers.size) {
-                val l = c.layers[i]
-                val k = if (i >= fr.revealFrom) fr.reveal else 1f
-                if (k <= 0f) continue
-                val age = (c.layers.size - 1 - i).toFloat() / 6f
-                val depth = (0.15f + 0.6f * age).coerceAtMost(0.8f)
-                add(ox + l.x * side, oy + l.y * side, l.r * side * 0.75f * easeOut(k) * bloomIn, depth, rgb(l.color), 0.5f * gain * k)
-                if (i >= fr.revealFrom && k < 1f) { ring[0] = ox + l.x * side; ring[1] = oy + l.y * side; ring[2] = l.r * side * (0.8f + 0.5f * k); ring[3] = (1f - k) * 0.9f }
-            }
-        }
-        // LIVE 악기 빛: 들리는 레이어마다 하나씩, 메인 빛 둘레의 정해진 자리에서 은은하게 켜짐
-        fr.liveLights.forEachIndexed { i, k ->
-            if (k <= 0.001f) return@forEachIndexed
-            val (dx, dy) = INSTRUMENT_POS[i % INSTRUMENT_POS.size]
-            val c = mix(mix(pal.horizon, mainColor, 0.35f + 0.1f * i), f(1f, 0.92f, 0.8f), 0.25f)
-            add(aspect / 2 + dx * aspect, 0.40f + dy, (0.035f + 0.006f * (i % 3)) * bloomIn * (0.7f + 0.3f * k), 0.25f + 0.08f * (i % 4), c, 0.42f * k)
-        }
-        if (n < 3) add(aspect * 0.66f + 0.008f * tau(t + 7f, 10f), 0.60f, 0.05f * bloomIn, 0.35f, mainColor, 0.22f * gain)
-
+        val pal = mixPalette(palette(fr.dayFrom), palette(fr.dayTo), fr.dayMix)
         val g = FloatArray(MAX_GLASS * 4); val gr = FloatArray(4)
         glass.take(MAX_GLASS).forEachIndexed { i, q ->
             g[i * 4] = q.l * scale; g[i * 4 + 1] = q.t * scale; g[i * 4 + 2] = q.r * scale; g[i * 4 + 3] = q.b * scale; gr[i] = q.radius * scale
         }
-        return linkedMapOf(
-            "iResolution" to f(w, h),
-            "iTime" to f(t),
-            "coverMode" to f(0f),
-            *bg(pal, aspect),
-            "mainLight" to main, "mainColor" to mainColor,
-            "calm" to f(s.calm),
-            "lights" to lights, "lightCol" to cols, "lightCount" to f(n.toFloat()),
-            "ring" to ring,
-            "scars" to scars, "scarCount" to f(ns.toFloat()),
-            "bandY" to f(0.80f), "bandWave" to f((0.004f + 0.012f * (1f - s.calm)) * (0.6f + 0.6f * s.energy)),
-            // 물방울 배치는 고정(0.85), 나타나고 사라지는 건 rainAlpha로 페이드(와이퍼 ON/OFF 2초)
-            "rain" to f(if (fr.rainAmount > 0f) 0.85f else 0f), "rainAlpha" to f(fr.rainAmount), "rainSeed" to f(3f),
+        return waves(fr.waves, pal, w, h, fr.timeSec, fr.master, cover = false) + mapOf(
             "glass" to g, "glassRad" to gr, "glassCount" to f(glass.size.coerceAtMost(MAX_GLASS).toFloat()),
-            "master" to f(fr.master * (1f - 0.35f * fr.sink)),
-            "ripple" to f(aspect / 2, fr.ripple.coerceAtLeast(0f), 0.022f, if (fr.ripple >= 0f) 1f else 0f),
-            "sideGlow" to f(fr.edgeL, fr.edgeR), "sparkle" to f(fr.sparkle),
-        ).also { u -> if (fr.heat > 0f) for (k in listOf("bgTop", "bgBottom")) u[k]?.let { lch -> u[k] = f((lch[0] * (1f + 0.08f * fr.heat)).coerceAtMost(0.98f), lch[1] * heatK, lch[2]) } }
+        )
     }
 
-    /** 악기 빛 자리(메인 빛 기준, x는 화면 비율·y는 높이 비율). 위·옆으로 둥글게 둘러쌈. */
-    private val INSTRUMENT_POS = listOf(
-        -0.17f to -0.10f, 0.18f to -0.14f, -0.27f to 0.06f, 0.29f to 0.03f, -0.07f to -0.24f, 0.10f to 0.17f,
-    )
-
-    /** 채도를 k배(밝기 축은 그대로). */
-    private fun saturate(c: FloatArray, k: Float): FloatArray {
-        if (k == 1f) return c
-        val l = 0.299f * c[0] + 0.587f * c[1] + 0.114f * c[2]
-        return FloatArray(3) { (l + (c[it] - l) * k).coerceIn(0f, 1f) }
-    }
-
-    /** 드라이브 앨범 커버(정사각형). 부드러움 = 빛의 크기·선명도, 비 = 물방울, 테이프스톱 = 빛이 흐트러진 자국, 시간대 = 색온도. */
-    fun cover(c: CoverSpec, side: Float, tz: TimeZone = TimeZone.getDefault()): Map<String, FloatArray> {
-        val pal = palette(partOf(c.id, tz))
-        val lights = FloatArray(MAX_LIGHTS * 4); val cols = FloatArray(MAX_LIGHTS * 4)
-        val scars = FloatArray(MAX_SCARS * 4); var ns = 0
-        val from = (c.layers.size - CoverArt.MAX_LIGHTS).coerceAtLeast(0)
-        var n = 0
-        for (i in from until c.layers.size) {
-            val l = c.layers[i]
-            val sharp = CoverArt.sharpness(l)
-            // 부드러움 = 크기·선명도: 또렷한 빛은 심이 살아 있고, 흐린 빛은 깊이 들어가 번진다
-            lights[n * 4] = l.x; lights[n * 4 + 1] = l.y; lights[n * 4 + 2] = l.r * 1.1f; lights[n * 4 + 3] = (1f - sharp) * 0.85f
-            val col = rgb(l.color)
-            cols[n * 4] = col[0]; cols[n * 4 + 1] = col[1]; cols[n * 4 + 2] = col[2]; cols[n * 4 + 3] = 0.55f + 0.35f * sharp
-            if (l.scars > 0 && ns < MAX_SCARS) { scars[ns * 4] = l.x; scars[ns * 4 + 1] = (0.45f + 0.25f * l.scars).coerceAtMost(1f); ns++ }
-            n++
+    /** 물결 상태 → uniform. 멜로디 기준 높이·폭은 곡 진행만큼 함께 오른다. */
+    fun waves(ws: WaveState, pal: Palette, w: Float, h: Float, timeSec: Float, master: Float, cover: Boolean): Map<String, FloatArray> {
+        val L = FloatArray(24); val M = FloatArray(24); val X = FloatArray(24)
+        ws.lines.take(6).forEachIndexed { i, l ->
+            L[i * 4] = l.y; L[i * 4 + 1] = l.amp; L[i * 4 + 2] = l.phase; L[i * 4 + 3] = l.freq
+            M[i * 4] = l.edge; M[i * 4 + 1] = l.glow; M[i * 4 + 2] = l.swell; M[i * 4 + 3] = l.fold
+            X[i * 4] = l.tint; X[i * 4 + 1] = l.ripple; X[i * 4 + 2] = l.shape
         }
-        val calm = (1f - c.wave).coerceIn(0f, 1f)
-        return linkedMapOf(
-            "iResolution" to f(side, side),
-            "iTime" to f(0f),
-            "coverMode" to f(1f),
-            *bg(pal, 1f),
-            "mainLight" to FloatArray(4), "mainColor" to FloatArray(3),
-            "calm" to f(calm),
-            "lights" to lights, "lightCol" to cols, "lightCount" to f(n.toFloat()),
-            "ring" to FloatArray(4),
-            "scars" to scars, "scarCount" to f(ns.toFloat()),
-            "bandY" to f(0.82f), "bandWave" to f(0.004f + 0.014f * c.wave),
-            "rain" to f((c.rainLines / 20f).coerceIn(0f, 1f)), "rainAlpha" to f(1f), "rainSeed" to f((c.id % 997).toFloat()),
-            "glass" to FloatArray(MAX_GLASS * 4), "glassRad" to FloatArray(4), "glassCount" to f(0f),
-            "master" to f(1f),
-            "ripple" to FloatArray(4), "sideGlow" to FloatArray(2), "sparkle" to f(0f),
-        )
-    }
-
-    private fun mix3(a: Palette, b: Palette, k: Float) =
-        Palette(mix(a.top, b.top, k), mix(a.bottom, b.bottom, k), mix(a.horizon, b.horizon, k), mix(a.sun, b.sun, k).also { it[0] = if (a.sun[3] > 0f) a.sun[0] else b.sun[0]; it[1] = if (a.sun[3] > 0f) a.sun[1] else b.sun[1]; it[2] = if (a.sun[3] > 0f) a.sun[2] else b.sun[2] }, mix(a.sunCol, b.sunCol, k), mixBand(a.band, b.band, k))
-
-    /** 띠: 색은 섞고, 두께는 있는 쪽 것(없는 쪽은 세기 0으로 사라짐). */
-    private fun mixBand(a: FloatArray, b: FloatArray, k: Float): FloatArray {
-        val w = if (a[3] > 0f && b[3] > 0f) a[3] + (b[3] - a[3]) * k else maxOf(a[3], b[3])
-        return f(a[0] + (b[0] - a[0]) * k, a[1] + (b[1] - a[1]) * k, a[2] + (b[2] - a[2]) * k, w)
-    }
-
-    /** 바탕 uniform: 위·아래 색(OKLCh), 바닥 빛, 햇빛(x는 가로세로비로 환산). */
-    private fun bg(pal: Palette, aspect: Float): Array<Pair<String, FloatArray>> {
+        val mel = FloatArray(32) { ws.melY.getOrElse(it) { 0.5f } }
+        val melA = FloatArray(32) { ws.melA.getOrElse(it) { 0f } }
+        val lift = 0.05f * ws.rise + 0.03f * ws.climax
+        val P = FloatArray(WaveState.MAX_PULSES * 4); ws.pulses.takeLast(WaveState.MAX_PULSES).forEachIndexed { i, q -> P[i * 4] = q.t; P[i * 4 + 1] = q.amp; P[i * 4 + 2] = q.cx; P[i * 4 + 3] = q.kind.toFloat() }
         val (top, bottom) = gradientLch(pal.top, pal.bottom)
-        return arrayOf(
-            "bgTop" to top, "bgBottom" to bottom, "horizon" to pal.horizon, "band" to pal.band,
-            "sun" to f(pal.sun[0] * aspect, pal.sun[1], pal.sun[2], pal.sun[3]), "sunCol" to pal.sunCol,
+        return linkedMapOf(
+            "iResolution" to f(w, h), "iTime" to f(timeSec), "coverMode" to f(if (cover) 1f else 0f),
+            "bgTop" to top, "bgBottom" to bottom, "waveCol" to deepen(pal.wave, ws.rise), "accent" to pal.accent, "band" to pal.band,
+            "amb" to f(pal.ambient[0], pal.ambient[1], pal.ambient[2], ws.ambKick),
+            "L" to L, "M" to M, "X" to X,
+            "mel" to mel, "melA" to melA, "melBase" to f(WaveMotion.BASE_Y[Inst.MELODY.ordinal] - lift, 0.11f, ws.melShift),
+            "P" to P,
+            "G" to f(ws.flat, ws.dim, ws.sag, ws.fade), "G2" to f(ws.rise, ws.rain, ws.edgeL, ws.edgeR),
+            "scars" to FloatArray(MAX_SCARS * 4), "scarCount" to f(0f),
+            "master" to f(master),
+            "glass" to FloatArray(MAX_GLASS * 4), "glassRad" to FloatArray(4), "glassCount" to f(0f),
         )
     }
+
+    /** 곡이 진행될수록 색이 조금 깊어짐(채도 +20%까지). */
+    private fun deepen(c: FloatArray, k: Float): FloatArray {
+        if (k <= 0f) return c
+        val l = 0.299f * c[0] + 0.587f * c[1] + 0.114f * c[2]
+        val s = 1f + 0.2f * k
+        return FloatArray(3) { (l + (c[it] - l) * s).coerceIn(0f, 1f) }
+    }
+
+    /**
+     * 드라이브 앨범·결과 커버(정사각형): 같은 물결 스타일. 구간(겹) 하나 = 물결 한 줄(최대 5줄).
+     * 부드러운 구간 = 잔잔하고 또렷한 물결, 분주한 구간 = 높게 출렁임, 흔들림(테이프스톱) = 그 자리 물결이 접힌 자국, 비 = 잔물결 결, 시간대 = 색.
+     */
+    fun cover(c: CoverSpec, side: Float, tz: TimeZone = TimeZone.getDefault()): Map<String, FloatArray> {
+        val (ws, pal) = coverWaves(c, tz)
+        val u = waves(ws, pal, side, side, 0f, 1f, cover = true).toMutableMap()
+        val scars = FloatArray(MAX_SCARS * 4); var ns = 0
+        for (l in c.layers.takeLast(5)) if (l.scars > 0 && ns < MAX_SCARS) { scars[ns * 4] = l.x; scars[ns * 4 + 1] = (0.45f + 0.25f * l.scars).coerceAtMost(1f); ns++ }
+        u["scars"] = scars; u["scarCount"] = f(ns.toFloat())
+        return u
+    }
+
+    /** 커버의 물결 상태와 팔레트(셰이더·Canvas 공용). */
+    fun coverWaves(c: CoverSpec, tz: TimeZone = TimeZone.getDefault()): Pair<WaveState, Palette> {
+        val pal = palette(partOf(c.id, tz))
+        val rnd = Random(c.id)
+        val lines = Inst.entries.map { app.playdrive.ui.WaveLine(WaveMotion.BASE_Y[it.ordinal], 0f, 0f, WaveMotion.FREQ[it.ordinal], 0f, 0f) }.toMutableList()
+        // 맨 뒤 패드 = 바탕 물결(늘), 구간마다 물결 한 줄(코드 → 베이스 → 드럼 → 하이햇 자리)
+        val smoothAll = if (c.layers.isEmpty()) 0.6f else c.layers.map { CoverArt.sharpness(it) }.average().toFloat()
+        lines[Inst.PAD.ordinal] = app.playdrive.ui.WaveLine(WaveMotion.BASE_Y[Inst.PAD.ordinal] - 0.06f, 0.040f, rnd.nextFloat() * 6.283f, WaveMotion.FREQ[Inst.PAD.ordinal] * 1.3f, 1f, 0.85f)
+        val slots = listOf(Inst.CHORDS, Inst.BASS, Inst.DRUMS, Inst.HIHAT)
+        c.layers.takeLast(slots.size).forEachIndexed { i, l ->
+            val x = slots[i]
+            val sharp = CoverArt.sharpness(l)
+            lines[x.ordinal] = app.playdrive.ui.WaveLine(
+                y = WaveMotion.BASE_Y[x.ordinal] - 0.04f, amp = WaveMotion.BASE_AMP[x.ordinal].coerceAtLeast(0.014f) * (0.8f + 1.6f * (1f - sharp)),
+                phase = rnd.nextFloat() * 6.283f, freq = WaveMotion.FREQ[x.ordinal] * 1.4f,
+                edge = 1f, glow = 0.7f + 0.3f * sharp, shape = rnd.nextFloat() * 6.283f,
+                ripple = if (l.rain > 0) 0.6f else 0f,
+            )
+        }
+        // 멜로디 리본(포인트 색): 부드러운 주행일수록 또렷하게, 모양은 주행마다 다르게
+        val p0 = rnd.nextFloat() * 6.283f
+        val melY = List(WaveState.MEL_POINTS) { j -> (0.5f + 0.35f * kotlin.math.sin(j * 0.32f + p0) * (0.6f + 0.4f * (1f - smoothAll))).coerceIn(0f, 1f) }
+        val melA = List(WaveState.MEL_POINTS) { (0.45f + 0.5f * smoothAll) }
+        return WaveState(lines = lines, melY = melY, melA = melA, rain = (c.rainLines / 20f).coerceIn(0f, 1f), rise = 0.45f) to pal
+    }
+
+    private fun mixPalette(a: Palette, b: Palette, k: Float) =
+        Palette(mix(a.top, b.top, k), mix(a.bottom, b.bottom, k), mix(a.wave, b.wave, k), mix(a.accent, b.accent, k), ambient = mix(a.ambient, b.ambient, k), band =
+            f(a.band[0] + (b.band[0] - a.band[0]) * k, a.band[1] + (b.band[1] - a.band[1]) * k, a.band[2] + (b.band[2] - a.band[2]) * k, a.band[3] + (b.band[3] - a.band[3]) * k)
+                .also { if (a.band[3] == 0f) { it[0] = b.band[0]; it[1] = b.band[1]; it[2] = b.band[2] } else if (b.band[3] == 0f) { it[0] = a.band[0]; it[1] = a.band[1]; it[2] = a.band[2] } })
 }

@@ -19,58 +19,49 @@ import kotlin.math.min
 import kotlin.math.sin
 
 /**
- * (API 33 미만 대체) 운전 중 무드 화면: 단색 배경 + 추상 그래픽(겹친 원과 물결). 글자·숫자 없음.
- * 상태·시간 규칙은 [MoodScene](순수, 단위 테스트):
- * - restricted(주행 중): 기본은 정지(다시 그리지 않음). 음악 이벤트 때만 [DriveMotion] 전환(≤2초) 동안 다시 그린다.
- * - 정차 중: 원이 12초 주기로 아주 천천히 움직이고, 주행 중 쌓인 음악 상태로 3초에 걸쳐 바뀐다.
+ * (API 33 미만 대체) 무드(주행) 화면: 셰이더와 같은 물결을 Canvas 경로로 단순하게 그린다. 글자·숫자 없음.
+ * 상태는 [MoodScene]·[WaveMotion](순수, 단위 테스트).
  */
 class CanvasMoodLayer(context: Context, private val host: MoodView) : View(context) {
-    private fun now() = SystemClock.uptimeMillis()
-    private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
-    private val wavePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeWidth = 3f }
-    private val path = Path()
-    private val scene get() = host.scene
-
     override fun onDraw(c: Canvas) {
-        val f = scene.frame(now())
-        c.drawColor(f.background)
-        val w = width.toFloat(); val h = height.toFloat()
-        // 오늘의 커버: 무드 원과 같은 중심에 화면 높이만 한 정사각형으로 은은하게(가장자리는 배경색으로 스며들게)
-        f.cover?.let { cv ->
-            val side = min(w, h) * 1.08f
-            CoverPainter.draw(c, cv, (w - side) / 2, h * 0.46f - side / 2, side, f.coverAlpha, f.revealFrom, f.reveal, f.background)
-        }
-        val cx = w / 2; val cy = h * 0.46f
-        val unit = min(w, h)
-        val ma = f.moodAlpha
-        // 겹친 원 3개: 레이어가 많을수록(에너지) 크고 넓게. 가장자리는 투명으로 번진다.
-        for ((rr, col) in f.circles) {
-            val r = rr * unit * f.mainScale
-            val a = (Color.alpha(col) * ma * f.mainGain).toInt().coerceIn(0, 255)
-            paint.shader = RadialGradient(cx, cy, r, (a shl 24) or (col and 0xFFFFFF), Color.TRANSPARENT, Shader.TileMode.CLAMP)
-            c.drawCircle(cx, cy, r, paint)
-        }
-        paint.shader = null
-        // 물결: 부드러울수록 잔잔
-        wavePaint.color = ((Color.alpha(f.waveColor) * ma).toInt() shl 24) or (f.waveColor and 0xFFFFFF)
-        val amp = h * f.waveAmp
-        for (k in 0 until 2) {
-            path.reset()
-            val y0 = h * (0.78f + k * 0.05f)
+        val f = host.currentFrame()
+        val pal = app.playdrive.ui.light.LightParams.palette(if (f.dayMix >= 0.5f) f.dayTo else f.dayFrom)
+        WavePainter.draw(c, 0f, 0f, width.toFloat(), height.toFloat(), f.waves, pal, f.master)
+        if (isAttachedToWindow) postInvalidateOnAnimation()
+    }
+}
+
+/** Canvas 물결(셰이더가 없는 기기): 바탕 그라데이션 + 악기별 물결 면·가장자리 + 멜로디 선 + 바닥 앰비언트 선. */
+object WavePainter {
+    private val p = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val path = Path()
+    private fun col(c: FloatArray, a: Float) = Color.argb((a.coerceIn(0f, 1f) * 255).toInt(), (c[0] * 255).toInt(), (c[1] * 255).toInt(), (c[2] * 255).toInt())
+
+    fun draw(c: Canvas, x0: Float, y0: Float, w: Float, h: Float, ws: WaveState, pal: app.playdrive.ui.light.LightParams.Palette, master: Float) {
+        p.style = Paint.Style.FILL
+        p.shader = android.graphics.LinearGradient(0f, y0, 0f, y0 + h, col(pal.top, 1f), col(pal.bottom, 1f), Shader.TileMode.CLAMP)
+        c.drawRect(x0, y0, x0 + w, y0 + h, p); p.shader = null
+        val aspect = w / h
+        ws.lines.forEachIndexed { i, l ->
+            if (i >= 5 || l.edge + l.glow <= 0.002f) return@forEachIndexed
+            path.reset(); path.moveTo(x0, y0 + h)
             var x = 0f
-            path.moveTo(0f, y0)
-            while (x <= w) {
-                path.lineTo(x, y0 + amp * sin(2 * PI * (x / w * 1.5 + k * 0.3 + f.wavePhase)).toFloat())
-                x += 8f
-            }
-            c.drawPath(path, wavePaint)
+            while (x <= aspect + 0.01f) { path.lineTo(x0 + x * h, y0 + WaveGeom.height(ws, i, x, aspect) * h); x += 0.01f }
+            val y = l.y
+            path.lineTo(x0 + w, y0 + h); path.close()
+            val lc = if (i == 1 || i == 4) FloatArray(3) { pal.wave[it] + (pal.accent[it] - pal.wave[it]) * 0.4f } else pal.wave
+            p.style = Paint.Style.FILL
+            p.shader = android.graphics.LinearGradient(0f, y0 + y * h, 0f, y0 + h, col(lc, 0.45f * l.glow * WaveState.WEIGHT[i] * 4f), col(lc, 0f), Shader.TileMode.CLAMP)
+            c.drawPath(path, p); p.shader = null
+            p.style = Paint.Style.STROKE; p.strokeWidth = h * 0.004f
+            p.color = col(pal.accent, 0.55f * l.edge * (1f - 0.75f * l.fold))
+            c.drawPath(path, p)
         }
-        if (f.rainAmount > 0f) { // 비: 가는 사선 몇 개(정적, 와이퍼 ON/OFF 때 페이드)
-            wavePaint.color = Color.argb((40 * f.rainAmount).toInt(), 200, 220, 255)
-            for (i in 0 until 14) { val x = w * (i + 0.5f) / 14; c.drawLine(x, h * 0.1f, x - 20, h * 0.1f + 60, wavePaint) }
-        }
-        if (f.master < 1f) c.drawColor(Color.argb(((1f - f.master) * 255).toInt(), 0, 0, 0))
-        if (scene.animatingAt(now()) && isAttachedToWindow) postInvalidateOnAnimation()
+        p.style = Paint.Style.FILL
+        p.shader = android.graphics.LinearGradient(0f, y0 + h * 0.93f, 0f, y0 + h, col(pal.accent, 0f), col(pal.accent, 0.5f), Shader.TileMode.CLAMP)
+        c.drawRect(x0, y0 + h * 0.93f, x0 + w, y0 + h, p); p.shader = null
+        val dark = 1f - master * (1f - ws.dim)
+        if (dark > 0f) { p.color = Color.argb((dark * 255).toInt().coerceIn(0, 255), 0, 0, 0); c.drawRect(x0, y0, x0 + w, y0 + h, p) }
     }
 }
 
@@ -163,8 +154,7 @@ class GlyphButton(context: Context, private val glyph: Char, desc: String, priva
     }
 }
 
-/** 앨범 커버(격자·상세·결과 화면). */
-/** 앨범 커버: API 33+ 는 무드 화면과 같은 빛 셰이더(coverMode), 그 아래는 Canvas. */
+/** 앨범 커버(격자·상세·결과 화면): 무드 화면과 같은 물결 셰이더(coverMode), API 33 미만은 Canvas 물결. */
 class CoverView(context: Context) : View(context) {
     var spec: CoverSpec? = null
         set(v) { field = v; invalidate() }
@@ -179,89 +169,9 @@ class CoverView(context: Context) : View(context) {
             c.save(); c.translate((width - side) / 2, (height - side) / 2)
             c.drawRect(0f, 0f, side, side, sp)
             c.restore()
-        } else CoverPainter.draw(c, s, (width - side) / 2, (height - side) / 2, side, 1f, s.layers.size, 1f, null)
-    }
-}
-
-/**
- * 커버 그리기(무드 배경·앨범 공용).
- * 겹마다: 둥근 원(부드러운 구간) + 빗줄기(비 온 구간) + 물결이 흐트러진 자국(깨진 순간).
- * revealFrom 이후 겹은 reveal(0~1)만큼만 그린다: 원이 자라고, 빗줄기가 내려오고, 자국이 번진다. 새 겹 둘레엔 잠깐 빛 고리.
- * fadeTo != null 이면 가장자리를 그 색으로 스며들게(무드 배경용).
- */
-object CoverPainter {
-    private val p = Paint(Paint.ANTI_ALIAS_FLAG)
-    private val path = Path()
-
-    private fun a(color: Int, alpha: Float) = ((Color.alpha(color) * alpha).toInt().coerceIn(0, 255) shl 24) or (color and 0xFFFFFF)
-    private fun easeOut(k: Float) = 1f - (1f - k) * (1f - k) * (1f - k)
-
-    fun draw(c: Canvas, s: CoverSpec, x0: Float, y0: Float, side: Float, alpha: Float, revealFrom: Int, reveal: Float, fadeTo: Int?) {
-        fun X(v: Float) = x0 + v * side
-        fun Y(v: Float) = y0 + v * side
-        p.style = Paint.Style.FILL; p.shader = null
-        if (fadeTo == null) {
-            p.color = a(s.background or 0xFF000000.toInt(), alpha)
-            c.drawRect(x0, y0, x0 + side, y0 + side, p)
-        } else { // 무드 배경: 네모 테두리 없이 둥글게 번지는 바탕색
-            p.shader = RadialGradient(X(0.5f), Y(0.5f), side * 0.5f, intArrayOf(a(s.background or 0xFF000000.toInt(), alpha * 0.4f), a(s.background or 0xFF000000.toInt(), alpha * 0.25f), 0), floatArrayOf(0f, 0.6f, 1f), Shader.TileMode.CLAMP)
-            c.drawRect(x0, y0, x0 + side, y0 + side, p); p.shader = null
-        }
-        p.shader = RadialGradient(X(0.5f), Y(0.5f), side * 0.7f, a(s.glow, alpha), 0x00000000, Shader.TileMode.CLAMP)
-        c.drawRect(x0, y0, x0 + side, y0 + side, p); p.shader = null
-        val lum = (Color.red(s.background) * 0.299 + Color.green(s.background) * 0.587 + Color.blue(s.background) * 0.114) / 255
-        val rainColor = if (lum > 0.5) 0x993A5A7A.toInt() else 0x88BFD9FF.toInt()
-        // 바탕 물결(잔잔/출렁임)
-        p.style = Paint.Style.STROKE; p.strokeWidth = side * 0.008f; p.strokeCap = Paint.Cap.ROUND
-        p.color = a(0x66FFFFFF, alpha)
-        path.reset(); path.moveTo(X(0f), Y(0.8f))
-        var xx = 0f
-        while (xx <= 1f) { path.lineTo(X(xx), Y(0.8f + 0.05f * s.wave * sin(2 * PI * xx * 3).toFloat())); xx += 1f / 48 }
-        c.drawPath(path, p)
-        s.layers.forEachIndexed { i, l ->
-            val k = if (i < revealFrom) 1f else reveal
-            if (k <= 0f) return@forEachIndexed
-            val grow = easeOut(k)
-            // 둥근 원
-            p.style = Paint.Style.FILL
-            p.color = a((l.color and 0xFFFFFF) or 0x88000000.toInt(), alpha * k)
-            c.drawCircle(X(l.x), Y(l.y), l.r * side * grow, p)
-            if (i >= revealFrom && k < 1f) { // 새 겹 둘레 빛 고리
-                p.style = Paint.Style.STROKE; p.strokeWidth = side * 0.006f
-                p.color = a(0xCCFFFFFF.toInt(), alpha * (1f - k))
-                c.drawCircle(X(l.x), Y(l.y), l.r * side * (1f + 0.35f * k), p)
-            }
-            // 빗줄기: 원 둘레에서 위→아래로 내려온다
-            if (l.rain > 0) {
-                p.style = Paint.Style.STROKE; p.strokeWidth = side * 0.005f
-                p.color = a(rainColor, alpha * k)
-                val rnd = java.util.Random(l.seed.toLong())
-                repeat(l.rain) {
-                    val rx = l.x + (rnd.nextFloat() - 0.5f) * 0.5f
-                    val ry = l.y + (rnd.nextFloat() - 0.6f) * 0.5f
-                    val len = 0.07f * grow
-                    c.drawLine(X(rx), Y(ry), X(rx - 0.025f * grow), Y(ry + len), p)
-                }
-            }
-            // 깨진 순간(앨범 커버만): 바탕 물결이 그 자리에서 한 번 부드럽게 출렁이며 흩어진 자국
-            if (l.scars > 0 && fadeTo == null) {
-                p.style = Paint.Style.STROKE; p.strokeWidth = side * (0.006f + 0.004f * l.scars)
-                p.color = a(0x55F2E6D8, alpha * k)
-                val half = 0.12f * grow
-                path.reset(); path.moveTo(X(l.x - half), Y(0.8f))
-                var q = -half
-                while (q <= half) {
-                    val e = kotlin.math.exp(-(q / (half * 0.5f)) * (q / (half * 0.5f)))
-                    path.lineTo(X(l.x + q), Y(0.8f + 0.03f * e * sin(q / half * PI * 1.3).toFloat())); q += half / 24
-                }
-                c.drawPath(path, p)
-            }
-        }
-        p.style = Paint.Style.FILL
-        // 무드 배경: 가장자리를 배경색으로 스며들게
-        if (fadeTo != null) {
-            p.shader = RadialGradient(X(0.5f), Y(0.5f), side * 0.7f, intArrayOf(fadeTo and 0x00FFFFFF, fadeTo and 0x00FFFFFF, fadeTo or 0xFF000000.toInt()), floatArrayOf(0f, 0.45f, 0.71f), Shader.TileMode.CLAMP)
-            c.drawRect(x0, y0, x0 + side, y0 + side, p); p.shader = null
+        } else {
+            val (ws, pal) = app.playdrive.ui.light.LightParams.coverWaves(s)
+            WavePainter.draw(c, (width - side) / 2, (height - side) / 2, side, side, ws, pal, 1f)
         }
     }
 }

@@ -48,3 +48,4 @@ docs/demo/
 docs/screens/v4/raw/
 # v4 시연 영상(mp4)은 저장소에 올리지 않음
 docs/screens/v4/*.mp4
+docs/screens/v4/preview/
